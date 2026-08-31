@@ -1,0 +1,9 @@
+# Line endings are repository policy, not a personal git setting.
+#
+# bootstrap-wsl.sh runs inside Fedora. If it is ever checked out with CRLF endings,
+# Fedora fails it with "bad interpreter: /usr/bin/env bash^M", which is a confusing
+# error for a file that looks correct in an editor. Everything here is LF.
+* text=auto eol=lf
+
+# Templates are copied verbatim into new repositories; keep them LF too.
+*.template text eol=lf
