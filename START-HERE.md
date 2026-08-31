@@ -375,6 +375,22 @@ gh auth login --hostname github.com --git-protocol https --web
 gh auth status --hostname github.com --active
 ```
 
+Inside Fedora, run `bash bootstrap-wsl.sh` before this step. WSL has no browser of
+its own, so `--web` fails there with little or no explanation until the bootstrap has
+installed the browser bridge. The bootstrap also configures the git credential helper;
+without it, `git push` over HTTPS stalls on a username prompt that never renders,
+which looks like a network problem and is not one.
+
+If you will push a repository containing `.github/workflows`, add the scope that a
+default login does not request:
+
+```text
+gh auth refresh --hostname github.com --scopes workflow
+```
+
+Without it the remote rejects the push with a message naming the missing scope rather
+than the command that fixes it.
+
 If you deliberately use an existing fine-grained personal access token instead, use GitHub CLI’s interactive `--with-token` flow. Never place the token in a shell history, repository, Markdown file, or persistent environment variable.
 
 ### GitHub MCP is optional

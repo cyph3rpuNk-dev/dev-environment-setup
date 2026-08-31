@@ -187,7 +187,37 @@ elif [ -f "$HOME/.codex/config.toml" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-say "6. GitHub credentials"
+say "6. GitHub credentials and browser sign-in"
+# WSL ships no browser. Without one, "gh auth login --web" and every other
+# browser-based flow exits with little or no explanation, which reads as a hang.
+# Fedora has no wslu package, so install a minimal shim that hands URLs to the
+# Windows default browser.
+PS_EXE="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+if [ -x /usr/local/bin/wslview ]; then
+  ok "browser bridge present (/usr/local/bin/wslview)"
+elif [ "$CHECK_ONLY" = 1 ]; then
+  warn "no browser bridge; browser sign-in flows will fail with no useful error"
+elif [ ! -x "$PS_EXE" ]; then
+  warn "powershell.exe not reachable from WSL; cannot install the browser bridge"
+else
+  sudo tee /usr/local/bin/wslview >/dev/null <<'SHIM'
+#!/usr/bin/env bash
+# Hand a URL to the Windows default browser. WSL has no browser of its own.
+set -euo pipefail
+if [ $# -lt 1 ]; then
+  echo "usage: wslview <url>" >&2
+  exit 2
+fi
+exec /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe \
+     -NoProfile -NonInteractive -Command "Start-Process '$1'" >/dev/null 2>&1
+SHIM
+  sudo chmod 0755 /usr/local/bin/wslview
+  sudo ln -sf /usr/local/bin/wslview /usr/local/bin/xdg-open
+  printf 'export BROWSER=/usr/local/bin/wslview\n' | sudo tee /etc/profile.d/wsl-browser.sh >/dev/null
+  sudo chmod 0644 /etc/profile.d/wsl-browser.sh
+  ok "browser bridge installed (open a new shell so BROWSER is exported)"
+fi
+
 # A PAT must never be written to ~/.bashrc. This script checks GitHub CLI
 # authentication but never reads the token. Codex receives it only from the
 # companion launcher. Claude's PAT-backed GitHub MCP is an explicit manual choice
@@ -204,6 +234,30 @@ elif have gh; then
   fi
 else
   warn "GitHub CLI is missing; GitHub access and the optional MCP helper are unavailable"
+fi
+
+if [ "$GITHUB_AUTHENTICATED" = 1 ]; then
+  # Without a credential helper, "git push" over HTTPS blocks on a username prompt
+  # that never renders. It looks like a network hang and is not one.
+  if git config --get-regexp 'credential\.https://github\.com\.helper' >/dev/null 2>&1; then
+    ok "git credential helper configured for github.com"
+  elif [ "$CHECK_ONLY" = 1 ]; then
+    warn "no git credential helper; git push will stall on a hidden prompt"
+  elif gh auth setup-git --hostname github.com >/dev/null 2>&1; then
+    ok "git credential helper configured via gh"
+  else
+    warn "gh auth setup-git failed; git push over HTTPS will stall"
+  fi
+
+  # Pushing a repository containing .github/workflows requires the "workflow" scope,
+  # which a default login does not request. The remote rejects the push with a
+  # message naming the scope rather than the fix.
+  if gh auth status --hostname github.com 2>&1 | grep -q "workflow"; then
+    ok "token has the workflow scope"
+  else
+    warn "token lacks the 'workflow' scope; pushing .github/workflows will be rejected"
+    warn "  fix: gh auth refresh --hostname github.com --scopes workflow"
+  fi
 fi
 
 if grep -q 'GITHUB_MCP_PAT' "$HOME/.bashrc" 2>/dev/null; then
