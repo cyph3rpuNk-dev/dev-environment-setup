@@ -1,0 +1,18 @@
+# The repository's one local health gate. Replace each placeholder with a command
+# already used or deliberately approved by this repository's CI.
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'Continue'
+$failures = 0
+function Step([string]$Name, [scriptblock]$Action) {
+    Write-Host "`n== $Name =="
+    & $Action
+    if ($LASTEXITCODE -ne 0) { $script:failures++ }
+}
+
+Step 'format' { {{FORMAT_COMMAND}} }
+Step 'lint'   { {{LINT_COMMAND}} }
+Step 'test'   { {{TEST_COMMAND}} }
+# Add security or packaging checks only after verifying their policy inputs.
+exit $failures

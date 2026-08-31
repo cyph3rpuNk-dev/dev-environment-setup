@@ -1,0 +1,15 @@
+// Create a VS Code profile named "Rust · WSL", then copy these user settings.
+// This is for Linux projects whose repository gate checks all Cargo features.
+{
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.extraArgs": ["--workspace", "--all-targets", "--all-features", "--", "-Dwarnings"],
+  "rust-analyzer.cargo.allFeatures": true,
+  "rust-analyzer.cargo.targetDir": true,
+  "files.eol": "\n",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "editor.formatOnSave": true,
+  "terminal.integrated.defaultProfile.linux": "bash",
+  "search.exclude": { "**/target": true },
+  "files.watcherExclude": { "**/target/**": true }
+}

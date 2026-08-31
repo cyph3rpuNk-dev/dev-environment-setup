@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# The repository's one local health gate. Replace each placeholder with a command
+# already used or deliberately approved by this repository's CI.
+set -u
+
+failures=0
+step() {
+  printf '\n== %s ==\n' "$1"
+  shift
+  "$@" || failures=$((failures + 1))
+}
+
+step "format" {{FORMAT_COMMAND}}
+step "lint" {{LINT_COMMAND}}
+step "test" {{TEST_COMMAND}}
+# Add security or packaging checks only after verifying their policy inputs.
+
+exit "$failures"

@@ -1,0 +1,7 @@
+@AGENTS.md
+
+## Claude Code adapter
+
+This file intentionally contains no project policy. Put Claude-only details here,
+such as a link to a path-scoped `.claude/rules/` file or a local, untracked note.
+Critical rules belong in `AGENTS.md` so Claude Code and Codex receive the same policy.

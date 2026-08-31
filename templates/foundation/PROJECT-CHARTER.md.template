@@ -1,0 +1,71 @@
+# {{PROJECT_NAME}} project charter
+
+Status: {{IDEA | PROTOTYPE | ACTIVE | MAINTENANCE}}
+Visibility: {{PRIVATE | PUBLIC | UNDECIDED}}
+
+## Problem
+
+{{PROBLEM_TO_SOLVE}}
+
+## Users
+
+{{INTENDED_USERS}}
+
+## First useful milestone
+
+{{SMALLEST_END_TO_END_RESULT}}
+
+## Inputs and outputs
+
+- Inputs: {{INPUTS}}
+- Outputs: {{OUTPUTS}}
+- External systems: {{EXTERNAL_SYSTEMS_OR_NONE}}
+
+## Scope
+
+In scope:
+
+- {{IN_SCOPE_ITEM_1}}
+- {{IN_SCOPE_ITEM_2}}
+
+Not in scope:
+
+- {{NON_GOAL_1}}
+- {{NON_GOAL_2}}
+
+## Environment and stack decisions
+
+- Canonical development environment: {{WINDOWS | WSL | OTHER | UNDECIDED}}
+- Supported runtime environments: {{SUPPORTED_ENVIRONMENTS}}
+- Language and version policy: {{LANGUAGE_AND_VERSION_POLICY}}
+- Package manager and lockfile: {{PACKAGE_MANAGER_AND_LOCKFILE}}
+- Deployment target: {{DEPLOYMENT_TARGET_OR_UNDECIDED}}
+
+## Data, security, and safety
+
+- Data classification: {{PUBLIC | PRIVATE | LICENSED | SENSITIVE | MIXED}}
+- Credential handling: {{CREDENTIAL_MECHANISM}}
+- Retention and deletion: {{RETENTION_POLICY}}
+- Prohibited actions: {{ACTIONS_THE_PROJECT_MUST_NEVER_TAKE}}
+- Threats or misuse to design against: {{THREATS_OR_UNRESOLVED}}
+
+## Correctness
+
+- Required local gate: `{{GATE_COMMAND}}`
+- Core success metric: {{SUCCESS_METRIC}}
+- Required tests or evidence: {{TESTS_OR_EVIDENCE}}
+- Reproducibility requirement: {{REPRODUCIBILITY_POLICY}}
+
+## Ownership and distribution
+
+- Owner or maintainer: {{OWNER}}
+- Licence: {{LICENCE_OR_UNDECIDED}}
+- Third-party code or data constraints: {{THIRD_PARTY_CONSTRAINTS_OR_NONE}}
+
+## Open decisions
+
+<!-- Keep unknowns visible. Remove a line only when its decision is recorded above. -->
+
+- {{OPEN_DECISION_1}}
+- {{OPEN_DECISION_2}}
+

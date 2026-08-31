@@ -1,0 +1,38 @@
+# {{PROJECT_NAME}} agent policy
+
+`AGENTS.md` is the canonical cross-agent project policy. Claude Code imports it
+through `CLAUDE.md`; Codex reads it directly. Do not place a critical project rule
+only in a Claude hook, rule file, or personal note.
+
+## Purpose
+
+{{PROJECT_PURPOSE}}
+
+For a new repository, keep product scope, non-goals, environment decisions, data
+handling, and unresolved decisions in `PROJECT-CHARTER.md`. Do not turn an unresolved
+charter decision into agent policy.
+
+## Required gate
+
+Run `{{GATE_COMMAND}}` before declaring a change complete. CI invokes the same gate.
+
+## Invariants
+
+<!-- Replace each item with a fact verified from code, tests, or an approved spec. -->
+
+- {{VERIFIED_INVARIANT_1}}
+- {{VERIFIED_INVARIANT_2}}
+
+## Never do these
+
+<!-- State safety and security prohibitions in imperative language. -->
+
+- Never {{PROHIBITED_ACTION_1}}.
+- Never {{PROHIBITED_ACTION_2}}.
+
+## Change boundaries
+
+- Ask before changing {{SENSITIVE_PATHS_OR_SYSTEMS}}.
+- Do not edit generated files unless {{GENERATED_FILE_POLICY}}.
+- Keep project-specific commands and toolchain requirements in this file or linked
+  project documentation, never in an agent-specific adapter.

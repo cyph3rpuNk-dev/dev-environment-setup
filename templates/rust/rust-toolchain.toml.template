@@ -1,0 +1,6 @@
+# Choose stable or an exact version from the repository's compatibility policy.
+# An edition alone is not a toolchain policy.
+[toolchain]
+channel = "{{RUST_CHANNEL_OR_VERSION}}"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

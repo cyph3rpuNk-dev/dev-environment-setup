@@ -1,0 +1,16 @@
+// Create a VS Code profile named "Rust · Windows", then copy these user settings.
+// This template intentionally excludes personal UI and font preferences.
+{
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.extraArgs": ["--workspace", "--all-targets", "--", "-Dwarnings"],
+  "rust-analyzer.cargo.targetDir": true,
+  "rust-analyzer.cargo.buildScripts.enable": true,
+  "files.eol": "\n",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "editor.formatOnSave": true,
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "powershell.codeFormatting.preset": "OTBS",
+  "search.exclude": { "**/target": true },
+  "files.watcherExclude": { "**/target/**": true }
+}

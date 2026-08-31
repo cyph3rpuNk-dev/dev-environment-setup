@@ -1,0 +1,16 @@
+// Create a VS Code profile named "General · WSL", then copy these user settings.
+// This is the starting profile for Linux, data, service, and command-line projects.
+{
+  "files.eol": "\n",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "editor.formatOnSave": true,
+  "terminal.integrated.defaultProfile.linux": "bash",
+  "search.exclude": {
+    "**/.git": true
+  },
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true
+  }
+}

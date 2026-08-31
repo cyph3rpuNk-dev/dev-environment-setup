@@ -1,0 +1,14 @@
+# Exported VS Code profiles are personal backups and are never committed.
+*.code-profile
+
+# Editing backups
+*.bak
+*.orig
+
+# OS noise
+Thumbs.db
+.DS_Store
+
+# Nextcloud sync artefacts
+*.sync-conflict-*
+.~lock.*

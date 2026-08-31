@@ -1,0 +1,16 @@
+// Create a VS Code profile named "General · Windows", then copy these user settings.
+// Add language-specific settings and extensions only after a project selects its stack.
+{
+  "files.eol": "\n",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "editor.formatOnSave": true,
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "search.exclude": {
+    "**/.git": true
+  },
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true
+  }
+}
