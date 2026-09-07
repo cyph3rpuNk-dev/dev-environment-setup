@@ -12,8 +12,9 @@ bash bootstrap-wsl.sh --doctor
 ```
 
 The doctor is deliberately read-only. It checks the operating-system boundary, core
-tools, Rust components, agent configuration file presence, GitHub CLI authentication, and the
-extensions detectable from the command line. It does not verify the four VS Code
+tools and extensions for the selected stack. Include `-Stack Rust` or `--stack=rust`
+to check Rust, and `-ConfigureAgents` or `--configure-agents` to inspect agent
+configuration. Stack choices are not persisted. It does not verify VS Code
 profile names, an interactive Claude/Codex sign-in, live MCP connectivity, the Windows
 linker probe, configuration syntax/schema, or repository-specific gates. Those require the manual checks in
 `START-HERE.md` and section 9 of the detailed setup guide.
