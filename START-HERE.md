@@ -173,7 +173,10 @@ cd "C:\Dev-Setup"
 pwsh -File .\bootstrap-windows.ps1 -InstallMissing
 ```
 
-The script is designed to be rerun. It does not delete files or touch a project repository. It leaves existing `~/.codex/config.toml` and `~/.claude/settings.json` files alone rather than overwriting them.
+The script is designed to be rerun. It removes only its own temporary linker probe
+and does not modify project repositories. It preserves existing agent settings,
+except that it can append a missing GitHub MCP table to Codex configuration after
+GitHub CLI authentication succeeds.
 
 ### If the MSVC linker check fails
 
@@ -198,10 +201,15 @@ Open Fedora. The Windows setup folder is available through `/mnt/c`. For the exa
 ```bash
 cd /mnt/c/Dev-Setup
 bash bootstrap-wsl.sh --check
-bash bootstrap-wsl.sh
+bash bootstrap-wsl.sh --install-browser-bridge
 ```
 
 Enter the Fedora password when `sudo` asks for it. The script installs the system libraries needed by razer-control-secureblue, Rust tooling, GitHub CLI, and Linux-side VS Code extensions.
+
+The browser option explicitly installs or upgrades the toolkit's HTTP(S) bridge.
+It preserves custom handlers. Use `--no-dnf` to skip all sudo operations; it cannot
+be combined with `--install-browser-bridge`. After bootstrap, open a new login shell
+or run `export BROWSER=/usr/local/bin/wslview` before browser-based sign-in.
 
 Run it a second time after the first installation:
 
@@ -375,11 +383,11 @@ gh auth login --hostname github.com --git-protocol https --web
 gh auth status --hostname github.com --active
 ```
 
-Inside Fedora, run `bash bootstrap-wsl.sh` before this step. WSL has no browser of
-its own, so `--web` fails there with little or no explanation until the bootstrap has
-installed the browser bridge. The bootstrap also configures the git credential helper;
-without it, `git push` over HTTPS stalls on a username prompt that never renders,
-which looks like a network problem and is not one.
+Inside Fedora, use `bash bootstrap-wsl.sh --install-browser-bridge` if a browser
+bridge is needed. Open a new login shell or export `BROWSER=/usr/local/bin/wslview`
+afterwards. After authentication, rerun `bash bootstrap-wsl.sh` so it can configure
+the Git credential helper. Without a working credential helper, HTTPS Git operations
+may prompt for credentials instead of using the GitHub CLI session.
 
 If you will push a repository containing `.github/workflows`, add the scope that a
 default login does not request:
@@ -407,7 +415,10 @@ If you need GitHub MCP in Codex, rerun the relevant bootstrap after `gh auth sta
 bash ./helpers/codex-with-github-mcp.sh
 ```
 
-The helper retrieves the token from GitHub CLI and exposes it only to that Codex process.
+The helper retrieves the token from GitHub CLI for the Codex process and its
+descendants. The PowerShell helper temporarily sets the calling process environment
+and restores its previous value even if Codex fails. Neither helper persists it in
+the user environment or a configuration file.
 
 Claude Code’s documented GitHub MCP method stores a PAT-backed authorization header in Claude’s user-scoped MCP configuration. The bootstraps do not perform that persistent credential write automatically. Configure it manually only after deciding that you need it, use a fine-grained token limited to the required repositories, and rotate or remove it when it is no longer needed. See `dev-environment-setup.md` section 5.8.
 

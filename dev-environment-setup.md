@@ -809,7 +809,8 @@ Codex reads `~/.codex/config.toml` (user), `.codex/config.toml` (project, truste
 
 `~/.codex/config.toml`. The bootstrap scripts write this file if it does not exist and
 append the GitHub block after GitHub CLI authentication succeeds. They never read the
-token. If the file already exists, they leave it alone and you merge by hand.
+token. Existing settings are preserved except for appending a missing GitHub table;
+merge other settings by hand.
 
 ```toml
 # Codex owns whole tasks, same as Claude Code. The brake is the approval
@@ -1049,8 +1050,9 @@ gh auth status --hostname github.com --active
 Run the relevant bootstrap again. It checks authentication without reading the token
 and adds Codex's `bearer_token_env_var` configuration when needed. Launch Codex through
 the matching helper in `helpers/`; the helper reads the GitHub CLI token and sets
-`GITHUB_MCP_PAT` only for its child process. Do not place that variable in `~/.bashrc`
-or a persistent Windows user environment.
+`GITHUB_MCP_PAT` for Codex and its descendants. The PowerShell helper temporarily
+sets the calling process environment and restores the prior value in `finally`.
+Do not place that variable in `~/.bashrc` or a persistent Windows user environment.
 
 Claude Code's documented GitHub MCP method uses a fine-grained PAT in an authorization
 header. This is not process-only: `claude mcp add --scope user` stores the resulting
@@ -1215,7 +1217,7 @@ The deeper point: the collection's value to you is as a **model for writing your
    #   cargo install cargo-audit --locked
 
    Set-StrictMode -Version Latest
-   $ErrorActionPreference = 'Continue'
+   $ErrorActionPreference = 'Stop'
    Set-Location $PSScriptRoot
 
    $global:LASTEXITCODE = 0
@@ -1234,11 +1236,14 @@ The deeper point: the collection's value to you is as a **model for writing your
        param([string]$Label, [scriptblock]$Command)
        Write-Host ""
        Write-Host "== $Label ==" -ForegroundColor Cyan
-       & $Command
-       if ($LASTEXITCODE -eq 0) {
+       # One native command per Step; reset stale native status before cmdlets.
+       $global:LASTEXITCODE = 0
+       try {
+           & $Command
+           if ($LASTEXITCODE -ne 0) { throw "Command exited with $LASTEXITCODE" }
            Write-Host "PASS  $Label" -ForegroundColor Green
-       } else {
-           Write-Host "FAIL  $Label" -ForegroundColor Red
+       } catch {
+           Write-Host "FAIL  ${Label}: $_" -ForegroundColor Red
            $script:Failed++
        }
    }
@@ -1428,29 +1433,36 @@ In the WSL window, open the Extensions view. Installed extensions are grouped, a
 claude mcp list
 ```
 
-`✔ Connected` is the only acceptable status. `! Needs authentication` means the
-GitHub CLI credential is missing, expired, or insufficient. `✘ Failed to connect` on
-the GitHub server can also mean Claude stored an older header. Check
-`gh auth status --hostname github.com --active`, then rerun the bootstrap to refresh
-the Claude header. For Codex, start it through the credential-scoped helper.
+For each server you intentionally configured, verify that it connects. A GitHub
+authentication error can indicate an expired or insufficient credential. Claude's
+stored authorization header is separate from GitHub CLI authentication: replace or
+remove that server configuration manually as described in section 5.8. Rerunning
+bootstrap does not refresh Claude's header. For Codex, verify GitHub CLI authentication
+with `gh auth status --hostname github.com --active`, then start a new process through
+the credential helper.
 
 For Codex, start a session and ask it what MCP tools it has. If it lists none while the CLI sees them, you have hit the config-visibility gap noted in 5.4.
 
 ### 9.4 The guardrails actually block
 
-This is the important one. In the razer repo, ask Claude:
+Test guardrails in a disposable fixture with no hardware access, credentials or
+real signing material. Never use a real hardware command or signing-key edit as a
+test of whether a guardrail works: a failed guardrail would perform that action.
 
-> Run `cargo run -- probe`
+For the hardware hook, feed a synthetic tool-input JSON payload directly to a copy
+of the hook and assert its deny decision. Include denied and allowed command
+strings, malformed input and missing parser dependencies. The harness must inspect
+the returned decision; it must never execute the command string in the payload.
 
-It should be **blocked**, with the reason text from your hook. If it runs, the hook is not firing: check `chmod +x`, check `jq` is installed, and check the path in `.claude/settings.json` resolves.
+For file permissions, create an unrelated temporary repository with a dummy file
+named `nomad-release-signing-key.asc` containing only fixture text. Copy the relevant
+permission rule there and test the edit against that dummy file. A failed test may
+only change disposable text. Do not copy any real key into the fixture.
 
-In the Nomad repo, ask Claude:
-
-> Add a comment to the top of `nomad-release-signing-key.asc`
-
-It should refuse. If it edits the file, the deny rule path is wrong. Path rules starting with `/` in project settings anchor at the project root, so `Edit(/nomad-release-signing-key.asc)` is correct and `Edit(nomad-release-signing-key.asc)` would also match but at any depth.
-
-Repeat both prompts in a Codex session and expect them **not** to be blocked. That is not a bug: hooks and deny rules are Claude Code features, and 5.7 covers what protects the Codex side instead. Knowing which agent is protected by what is the point of the exercise.
+Verify each agent's configured controls independently in this fixture. Shared
+`AGENTS.md` instructions express policy but are not proof of enforcement. Consult
+the agent's current documentation and record observed behavior; do not assume that
+one agent's hooks or permission rules apply to another.
 
 ### 9.5 Both agents can see their instructions
 

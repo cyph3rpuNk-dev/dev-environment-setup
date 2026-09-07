@@ -1,8 +1,8 @@
 <#
     bootstrap-windows.ps1 : dev environment for Nomad Launcher (Windows side)
 
-    Safe to run more than once. It never deletes anything and never touches
-    your repositories.
+    Safe to run more than once. Only its own temporary linker probe is removed;
+    project repositories are never modified.
 
         pwsh -File .\bootstrap-windows.ps1              # do everything
         pwsh -File .\bootstrap-windows.ps1 -Check       # report only, change nothing
@@ -48,12 +48,14 @@ foreach ($t in $base) {
         Ok "$($t.What) found"
     }
     elseif ($Check) {
-        Warn "$($t.What) is missing"
+        if ($t.Cmd -eq 'gh') { Warn "$($t.What) is missing (optional GitHub access)" }
+        else { Bad "$($t.What) is missing" }
     }
     elseif ($InstallMissing -and (Have 'winget')) {
         Write-Host "  installing $($t.What) ..."
         winget install --id $($t.Winget) -e --accept-package-agreements --accept-source-agreements | Out-Null
-        if (Have $t.Cmd) { Ok "$($t.What) installed" }
+        if ($LASTEXITCODE -ne 0) { Bad "winget failed for $($t.What) (exit $LASTEXITCODE)" }
+        elseif (Have $t.Cmd) { Ok "$($t.What) installed" }
         else { Warn "$($t.What) installed but not yet on PATH; open a new terminal" }
     }
     else {
@@ -66,8 +68,9 @@ Say "2. Rust toolchain and the MSVC linker"
 
 if (Have 'rustup') {
     if (-not $Check) {
-        rustup component add rustfmt clippy 2>$null | Out-Null
-        Ok "rustfmt + clippy requested"
+        rustup component add rustfmt clippy | Out-Host
+        if ($LASTEXITCODE -eq 0) { Ok "rustfmt + clippy installed" }
+        else { Bad "could not install rustfmt + clippy" }
     }
     $hostLine = (rustup show 2>$null | Out-String)
     if ($hostLine -match 'msvc') { Ok "MSVC host toolchain in use" }
@@ -80,21 +83,37 @@ if (Have 'rustc') { Ok (rustc --version) }
 # The single most common Windows Rust failure is a missing MSVC linker, and it
 # only shows up at link time. So actually link something.
 if ((Have 'cargo') -and -not $Check) {
-    $probe = Join-Path $env:TEMP ("rustprobe-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $probe = Join-Path $tempRoot ("rustprobe-" + [guid]::NewGuid().ToString('N'))
+    $probeCreated = $false
+    $locationPushed = $false
     Write-Host "  test-compiling a tiny crate to prove the linker works ..."
-    cargo new --quiet --bin $probe 2>$null | Out-Null
-    Push-Location $probe
-    cargo build --quiet 2>$null | Out-Null
-    $linkOk = ($LASTEXITCODE -eq 0)
-    Pop-Location
-    Remove-Item -Recurse -Force $probe -ErrorAction SilentlyContinue
-    if ($linkOk) {
+    try {
+        # Own the temporary directory before invoking cargo; never reuse a path.
+        if (Test-Path -LiteralPath $probe) { throw "Probe path already exists: $probe" }
+        New-Item -ItemType Directory -Path $probe -ErrorAction Stop | Out-Null
+        $probeCreated = $true
+        cargo init --quiet --vcs none --bin $probe
+        if ($LASTEXITCODE -ne 0) { throw "Could not create the linker probe" }
+        Push-Location -LiteralPath $probe -ErrorAction Stop
+        $locationPushed = $true
+        cargo build --quiet
+        if ($LASTEXITCODE -ne 0) { throw "Could not link the probe; install Visual Studio Build Tools with Desktop development with C++" }
         Ok "MSVC linker works"
     }
-    else {
-        Bad "could not link a test binary. You need the C++ build tools:"
-        Write-Host "        winget install --id Microsoft.VisualStudio.2022.BuildTools -e" -ForegroundColor Yellow
-        Write-Host "        then in the installer tick 'Desktop development with C++'" -ForegroundColor Yellow
+    catch { Bad "Linker probe failed: $_" }
+    finally {
+        if ($locationPushed) { Pop-Location }
+        # Verify the absolute cleanup boundary and reject reparse points.
+        if ($probeCreated -and (Test-Path -LiteralPath $probe)) {
+            $resolvedProbe = (Resolve-Path -LiteralPath $probe).ProviderPath
+            $probeItem = Get-Item -LiteralPath $probe -Force
+            if ((Split-Path -Parent $resolvedProbe) -eq $tempRoot -and
+                -not ($probeItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                Remove-Item -LiteralPath $resolvedProbe -Recurse -Force -ErrorAction Stop
+            }
+            else { Bad "Refusing cleanup outside the owned temporary directory: $probe" }
+        }
     }
 }
 
@@ -110,20 +129,20 @@ function Install-Tool ($bin, $crate, $why) {
     if (Have $bin) { Ok "$bin already installed ($why)"; return }
     if ($Check) { Warn "$bin is missing ($why)"; return }
     if (Have 'cargo-binstall') {
-        cargo binstall -y --no-confirm $crate 2>$null | Out-Null
-        if (Have $bin) { Ok "$bin installed ($why)"; return }
+        cargo binstall -y --no-confirm $crate | Out-Host
+        if ($LASTEXITCODE -eq 0 -and (Have $bin)) { Ok "$bin installed ($why)"; return }
         Warn "binstall failed for $crate, falling back to a source build"
     }
     Write-Host "  building $crate from source, this can take a few minutes ..."
-    cargo install --locked $crate 2>$null | Out-Null
-    if (Have $bin) { Ok "$bin installed ($why)" } else { Bad "could not install $crate" }
+    cargo install --locked $crate | Out-Host
+    if ($LASTEXITCODE -eq 0 -and (Have $bin)) { Ok "$bin installed ($why)" } else { Bad "could not install $crate" }
 }
 
 if (Have 'cargo') {
     if (-not (Have 'cargo-binstall') -and -not $Check) {
         Write-Host "  installing cargo-binstall (makes everything below much faster) ..."
-        cargo install cargo-binstall --locked 2>$null | Out-Null
-        if (Have 'cargo-binstall') { Ok "cargo-binstall" } else { Warn "cargo-binstall unavailable; tools will build from source" }
+        cargo install cargo-binstall --locked | Out-Host
+        if ($LASTEXITCODE -eq 0 -and (Have 'cargo-binstall')) { Ok "cargo-binstall" } else { Warn "cargo-binstall unavailable; tools will build from source" }
     }
     Install-Tool 'cargo-nextest' 'cargo-nextest' 'better test runner for the httpmock integration tests'
     Install-Tool 'cargo-audit'   'cargo-audit'   'RUSTSEC advisories, matches the CI audit job'
@@ -167,9 +186,9 @@ else {
             Warn "$e is missing"
         }
         else {
-            code --install-extension $e --force 2>$null | Out-Null
+            code --install-extension $e --force | Out-Host
             if ($LASTEXITCODE -eq 0) { Ok "$e installed" }
-            else { Warn "could not install $e (check the name in the Extensions view)" }
+            else { Bad "could not install $e (check the name in the Extensions view)" }
         }
     }
 }
@@ -183,7 +202,7 @@ if (Have 'codex')  { Ok "codex found" }  else { Warn "codex CLI not found. Insta
 $codexDir = Join-Path $env:USERPROFILE '.codex'
 $codexCfg = Join-Path $codexDir 'config.toml'
 if (-not $Check -and -not (Test-Path $codexCfg)) {
-    New-Item -ItemType Directory -Force -Path $codexDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $codexDir -ErrorAction Stop | Out-Null
     @'
 # Codex owns whole tasks here, same as Claude Code, so it can write.
 # approval_policy = "on-request" keeps commands asking before they run;
@@ -200,7 +219,7 @@ url = "https://mcp.context7.com/mcp"
 
 [windows]
 sandbox = "elevated"
-'@ | Set-Content -Path $codexCfg -Encoding UTF8
+'@ | Set-Content -Path $codexCfg -Encoding UTF8 -ErrorAction Stop
     Ok "wrote $codexCfg"
 }
 elseif (Test-Path $codexCfg) {
@@ -251,8 +270,9 @@ else {
         Ok "claude: context7 already configured"
     }
     else {
-        claude mcp add --transport http --scope user context7 https://mcp.context7.com/mcp 2>$null | Out-Null
-        Ok "claude: context7 added"
+        claude mcp add --transport http --scope user context7 https://mcp.context7.com/mcp | Out-Host
+        if ($LASTEXITCODE -eq 0) { Ok "claude: context7 added" }
+        else { Bad "claude: could not add context7" }
     }
 
     if ($mcp -match 'github') { Ok "claude: github already configured" }
@@ -276,7 +296,7 @@ elseif ($githubAuthenticated) {
 url = "https://api.githubcopilot.com/mcp/"
 # Read from the process environment. Launch Codex through helpers/codex-with-github-mcp.ps1.
 bearer_token_env_var = "GITHUB_MCP_PAT"
-'@ | Add-Content -Path $codexCfg -Encoding UTF8
+'@ | Add-Content -Path $codexCfg -Encoding UTF8 -ErrorAction Stop
     Ok "codex: github added to config.toml"
 }
 else {
@@ -297,7 +317,7 @@ elseif (Test-Path $ccSettings) {
     Skip "$ccSettings already exists, left alone (see guide 5.3 for the block to merge)"
 }
 else {
-    New-Item -ItemType Directory -Force -Path $ccDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $ccDir -ErrorAction Stop | Out-Null
     @'
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
@@ -318,7 +338,7 @@ else {
   },
   "autoMemoryEnabled": true
 }
-'@ | Set-Content -Path $ccSettings -Encoding UTF8
+'@ | Set-Content -Path $ccSettings -Encoding UTF8 -ErrorAction Stop
     Ok "wrote $ccSettings"
 }
 
@@ -370,7 +390,7 @@ if ($Doctor) {
 
 # ---------------------------------------------------------------------------
 Say "Summary"
-if ($script:Failures -eq 0) { Write-Host "  No failures." }
+if ($script:Failures -eq 0) { Write-Host "  No required failures. Review warnings and manual checks below." }
 else { Write-Host "  $($script:Failures) problem(s) above need attention." -ForegroundColor Red }
 
 Write-Host @'
@@ -389,7 +409,7 @@ Write-Host @'
     7. Authenticate GitHub CLI when you need GitHub access:
          gh auth login --hostname github.com --git-protocol https --web
        Then launch Codex with helpers\codex-with-github-mcp.ps1. The helper
-       exposes the token only to that Codex process.
+       supplies the token during Codex execution and restores the caller's environment.
        Claude's PAT-backed GitHub MCP is not configured automatically.
     8. Follow START-HERE.md for the two existing repositories or NEW-PROJECT.md
        for a new project.
