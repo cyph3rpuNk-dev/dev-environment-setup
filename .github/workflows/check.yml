@@ -22,6 +22,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Run offline repository gate
-        shell: ${{ matrix.shell }}
+      - name: Run offline gate with Windows PowerShell
+        if: matrix.shell == 'powershell'
+        shell: powershell
+        run: ./scripts/check.ps1
+      - name: Run offline gate with PowerShell 7
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
         run: ./scripts/check.ps1
