@@ -1,25 +1,29 @@
 <#
-    bootstrap-windows.ps1 : dev environment for Nomad Launcher (Windows side)
+    bootstrap-windows.ps1 : project-neutral Windows development tools
 
     Safe to run more than once. Only its own temporary linker probe is removed;
     project repositories are never modified.
 
-        pwsh -File .\bootstrap-windows.ps1              # do everything
+        pwsh -File .\bootstrap-windows.ps1              # base tools and general extensions
         pwsh -File .\bootstrap-windows.ps1 -Check       # report only, change nothing
         pwsh -File .\bootstrap-windows.ps1 -Doctor      # check machine, agents, and GitHub auth
         pwsh -File .\bootstrap-windows.ps1 -InstallMissing
                                                         # also winget-install VS Code,
-                                                        # Git, GitHub CLI, rustup, and pwsh
+                                                        # Git, GitHub CLI, and pwsh; -Stack Rust adds rustup
 
     The Visual Studio C++ workload remains a manual installation if the linker
     probe fails, because selecting that large workload requires review.
 #>
 
 [CmdletBinding()]
+# Optional selections apply to this invocation only, including Check and Doctor.
+# -Stack Rust adds Rust; -ConfigureAgents adds agent defaults and MCP.
 param(
     [switch]$Check,
     [switch]$InstallMissing,
-    [switch]$Doctor
+    [switch]$Doctor,
+    [ValidateSet('Base', 'Rust')][string]$Stack = 'Base',
+    [switch]$ConfigureAgents
 )
 
 $ErrorActionPreference = 'Continue'
@@ -39,9 +43,12 @@ $base = @(
     @{ Cmd = 'code';   Winget = 'Microsoft.VisualStudioCode'; What = 'VS Code' },
     @{ Cmd = 'git';    Winget = 'Git.Git';                    What = 'Git' },
     @{ Cmd = 'gh';     Winget = 'GitHub.cli';                 What = 'GitHub CLI (credential store)' },
-    @{ Cmd = 'rustup'; Winget = 'Rustlang.Rustup';            What = 'Rust toolchain installer' },
-    @{ Cmd = 'pwsh';   Winget = 'Microsoft.PowerShell';       What = 'PowerShell 7 (dist.ps1 wants it)' }
+    @{ Cmd = 'pwsh';   Winget = 'Microsoft.PowerShell';       What = 'PowerShell 7' }
 )
+
+if ($Stack -eq 'Rust') {
+    $base += @{ Cmd = 'rustup'; Winget = 'Rustlang.Rustup'; What = 'Rust toolchain installer' }
+}
 
 foreach ($t in $base) {
     if (Have $t.Cmd) {
@@ -64,6 +71,7 @@ foreach ($t in $base) {
 }
 
 # ---------------------------------------------------------------------------
+if ($Stack -eq 'Rust') {
 Say "2. Rust toolchain and the MSVC linker"
 
 if (Have 'rustup') {
@@ -74,7 +82,7 @@ if (Have 'rustup') {
     }
     $hostLine = (rustup show 2>$null | Out-String)
     if ($hostLine -match 'msvc') { Ok "MSVC host toolchain in use" }
-    else { Warn "MSVC host toolchain not detected. Nomad needs it: rustup default stable-x86_64-pc-windows-msvc" }
+    else { Warn "MSVC host toolchain not detected. For Windows-native Rust use: rustup default stable-x86_64-pc-windows-msvc" }
 }
 else { Bad "rustup not available; the rest of this section is skipped" }
 
@@ -117,11 +125,6 @@ if ((Have 'cargo') -and -not $Check) {
     }
 }
 
-# Optional: signtool, only needed when you actually sign a release.
-$sdkBin = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
-if ((Have 'signtool') -or (Test-Path $sdkBin)) { Ok "Windows SDK present (signtool for dist.ps1 signing)" }
-else { Skip "Windows SDK not found. Only needed to sign releases; dist.ps1 builds unsigned without it." }
-
 # ---------------------------------------------------------------------------
 Say "3. Cargo tools"
 
@@ -144,25 +147,23 @@ if (Have 'cargo') {
         cargo install cargo-binstall --locked | Out-Host
         if ($LASTEXITCODE -eq 0 -and (Have 'cargo-binstall')) { Ok "cargo-binstall" } else { Warn "cargo-binstall unavailable; tools will build from source" }
     }
-    Install-Tool 'cargo-nextest' 'cargo-nextest' 'better test runner for the httpmock integration tests'
-    Install-Tool 'cargo-audit'   'cargo-audit'   'RUSTSEC advisories, matches the CI audit job'
+    Install-Tool 'cargo-nextest' 'cargo-nextest' 'test runner'
+    Install-Tool 'cargo-audit'   'cargo-audit'   'dependency advisories'
     Install-Tool 'cargo-deny'    'cargo-deny'    'licence and advisory policy'
     Install-Tool 'bacon'         'bacon'         'background clippy while an agent edits'
-    Install-Tool 'typos'         'typos-cli'     'typo check for SPEC.md and README.md'
+    Install-Tool 'typos'         'typos-cli'     'documentation spell checking'
 }
 else { Bad "cargo not available; skipping cargo tools" }
 
 # ---------------------------------------------------------------------------
+} # Optional Rust stack
+
 Say "4. VS Code extensions (Windows side)"
 
 $exts = @(
-    'rust-lang.rust-analyzer',
     'ms-vscode.powershell',
-    'ms-vscode.cpptools',
     'ms-vscode.hexeditor',
     'ms-vscode-remote.remote-wsl',
-    'tamasfe.even-better-toml',
-    'fill-labs.dependi',
     'usernamehw.errorlens',
     'github.vscode-github-actions',
     'github.vscode-pull-request-github',
@@ -172,6 +173,8 @@ $exts = @(
     'streetsidesoftware.code-spell-checker',
     'bierner.markdown-mermaid'
 )
+
+if ($Stack -eq 'Rust') { $exts += @('rust-lang.rust-analyzer', 'ms-vscode.cpptools', 'tamasfe.even-better-toml', 'fill-labs.dependi') }
 
 if (-not (Have 'code')) {
     Warn "'code' is not on PATH. Open VS Code, then run this script from its integrated terminal."
@@ -194,6 +197,7 @@ else {
 }
 
 # ---------------------------------------------------------------------------
+if ($ConfigureAgents) {
 Say "5. Agent CLIs"
 
 if (Have 'claude') { Ok "claude found" } else { Warn "claude CLI not found. Install it, then run 'claude' once to sign in." }
@@ -322,12 +326,7 @@ else {
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
-    "allow": [
-      "Bash(cargo fmt *)",
-      "Bash(cargo tree *)",
-      "Bash(cargo metadata *)",
-      "Bash(rustup show *)"
-    ],
+    "allow": [],
     "deny": [
       "Read(**/.env)",
       "Read(**/*.pfx)",
@@ -343,6 +342,8 @@ else {
 }
 
 # ---------------------------------------------------------------------------
+} # Optional agent configuration
+
 if ($Doctor) {
     Say "9. Doctor: environment boundaries and usable configuration"
     if ($env:OS -eq 'Windows_NT') { Ok "Windows host detected" } else { Bad "This script must run on Windows" }
@@ -373,7 +374,7 @@ if ($Doctor) {
         }
     }
     else { Warn "WSL is unavailable" }
-    if (Have 'rustup') {
+    if ($Stack -eq 'Rust' -and (Have 'rustup')) {
         $components = (rustup component list --installed 2>$null | Out-String)
         if ($components -match 'rustfmt' -and $components -match 'clippy') { Ok "rustfmt and clippy installed" }
         else { Warn "rustfmt or clippy missing" }
@@ -383,8 +384,10 @@ if ($Doctor) {
         if ($installed -contains 'ms-vscode-remote.remote-wsl') { Ok "VS Code Remote - WSL extension installed" }
         else { Warn "VS Code Remote - WSL extension missing" }
     }
+    if ($ConfigureAgents) {
     if (Test-Path $codexCfg) { Ok "Codex user configuration exists" } else { Warn "Codex user configuration missing" }
     if (Test-Path $ccSettings) { Ok "Claude user settings exist" } else { Warn "Claude user settings missing" }
+    }
     Write-Host "  Doctor does not verify VS Code profile names or agent sign-in state; see doctor/README.md." -ForegroundColor DarkGray
 }
 
@@ -393,27 +396,6 @@ Say "Summary"
 if ($script:Failures -eq 0) { Write-Host "  No required failures. Review warnings and manual checks below." }
 else { Write-Host "  $($script:Failures) problem(s) above need attention." -ForegroundColor Red }
 
-Write-Host @'
-
-  Still to do by hand (these cannot be scripted):
-    1. Run 'claude' and 'codex' once each and sign in.
-    2. Add plugins or skills only when a real project workflow requires them.
-       They are optional and expand the tools an agent can use.
-    3. In VS Code settings (user scope, not workspace):
-         Claude Code > Initial Permission Mode  ->  plan
-         Claude Code > Preferred Location       ->  sidebar
-    4. Create the four Rust and General profiles from profiles/, then adjust only
-       personal preferences. Keep exported profiles in a private backup.
-    5. Clone Nomad-Launcher to C:\src\Nomad-Launcher.
-    6. Install the WSL side: run bootstrap-wsl.sh inside your Fedora shell.
-    7. Authenticate GitHub CLI when you need GitHub access:
-         gh auth login --hostname github.com --git-protocol https --web
-       Then launch Codex with helpers\codex-with-github-mcp.ps1. The helper
-       supplies the token during Codex execution and restores the caller's environment.
-       Claude's PAT-backed GitHub MCP is not configured automatically.
-    8. Follow START-HERE.md for the two existing repositories or NEW-PROJECT.md
-       for a new project.
-
-'@
+Write-Host 'Next: START-HERE.md for base readiness; docs/stacks/ for optional stacks; docs/projects/ for project guides.'
 
 exit $script:Failures

@@ -1,4 +1,9 @@
-# VS Code + Claude Code + Codex: a working setup for Nomad Launcher and razer-control-secureblue
+# Historical project reference: Nomad Launcher and razer-control-secureblue
+
+This is a dated reference, not the default toolkit configuration. Follow
+`START-HERE.md` for current base setup and `docs/stacks/` for explicit stack
+selection. Project workflows are now under `docs/projects/`. Older bootstrap
+commands and assumptions below are retained for context, not current onboarding.
 
 Written 19 August 2026. Operational setup, Codex configuration, credential handling,
 and reusable-project guidance were revised on 28 August 2026. Repository facts below

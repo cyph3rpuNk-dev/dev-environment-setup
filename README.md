@@ -1,8 +1,21 @@
 # Development environment setup
 
-Workstation setup for native Windows/MSVC and Fedora in WSL, with reusable editor
-profiles and project templates. Follow [START-HERE.md](START-HERE.md) for a new
-machine and [NEW-PROJECT.md](NEW-PROJECT.md) for a new repository.
+Project-neutral workstation setup for Windows and optional Fedora in WSL.
+Follow [START-HERE.md](START-HERE.md) for a new machine and
+[NEW-PROJECT.md](NEW-PROJECT.md) for a new repository.
+
+The default bootstrap installs base tools and general editor extensions. Rust is
+opt-in with `-Stack Rust` or `--stack=rust`; agent configuration is opt-in with
+`-ConfigureAgents` or `--configure-agents`. Supply selections on each run,
+including check/doctor and reruns. Existing installations are never uninstalled.
+These defaults replace the earlier all-in-one setup.
+
+- [Stack profiles](docs/stacks/README.md): optional runtimes and build tools.
+- [Editor profiles](profiles/README.md): portable settings, copied separately.
+- [Project guides](docs/projects/README.md): optional Nomad, Razer and NCAAM workflows.
+
+`dev-environment-setup.md` is retained as a dated project reference; its old
+bootstrap commands are superseded by the current onboarding guide.
 
 ## Maintaining this toolkit
 

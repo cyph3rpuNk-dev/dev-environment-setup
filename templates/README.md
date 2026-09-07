@@ -39,7 +39,7 @@ Do not overwrite established documentation or policy with a generic template.
 4. Preserve accurate hand-written content verbatim when moving it.
 5. Work on a branch, run the current gate, review the diff, and use a pull request.
 
-The templates contain no Nomad, Razer, NCAAM, language, or deployment facts. Use
-`NEW-PROJECT.md` for the full new-project workflow. The project-specific sections in
-`START-HERE.md` and `dev-environment-setup.md` remain guidance for the two existing
-repositories, subject to verification against their current branches.
+The foundation templates contain no project-specific language or deployment policy.
+Use [NEW-PROJECT.md](../NEW-PROJECT.md) for the full new-project workflow and
+[optional project guides](../docs/projects/README.md) for dated project examples,
+subject to verification against their current repositories.

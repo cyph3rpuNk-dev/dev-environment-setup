@@ -65,6 +65,58 @@ try {
     }
     finally { Pop-Location }
 
+    # Run the full Windows bootstrap in a child shell with every external tool
+    # mocked and a disposable user profile. No real installation or auth occurs.
+    $profileHarness = @'
+param([string]$Source, [string]$Fixture, [string]$SelectedStack, [switch]$Agents, [switch]$Inspect)
+$env:USERPROFILE = $Fixture
+$global:Events = New-Object 'System.Collections.Generic.List[string]'
+function Record([string]$Name, $Arguments) {
+    $global:Events.Add($Name + ' ' + ($Arguments -join ' '))
+    $global:LASTEXITCODE = 0
+}
+function code { Record 'code' $args }
+function git { Record 'git' $args }
+function gh { Record 'gh' $args }
+function pwsh { Record 'pwsh' $args }
+function rustup { Record 'rustup' $args; 'stable-x86_64-pc-windows-msvc rustfmt clippy' }
+function rustc { Record 'rustc' $args; 'rustc fixture' }
+function cargo { Record 'cargo' $args }
+function cargo-binstall { Record 'cargo-binstall' $args }
+function cargo-nextest {}
+function cargo-audit {}
+function cargo-deny {}
+function bacon {}
+function typos {}
+function claude { Record 'claude' $args; 'context7 github' }
+function codex { Record 'codex' $args }
+function wsl { Record 'wsl' $args }
+function winget { throw 'Unexpected installer' }
+& $Source -Stack $SelectedStack -ConfigureAgents:$Agents -Check:$Inspect
+$result = $LASTEXITCODE
+[IO.File]::WriteAllLines((Join-Path $Fixture 'events.txt'), $global:Events)
+exit $result
+'@
+    [IO.File]::WriteAllText("$testRoot/profiles.ps1", $profileHarness, $utf8)
+    foreach ($selection in @('Base', 'Rust')) {
+        $fixture = Join-Path $testRoot "profile-$selection"
+        $null = New-Item -ItemType Directory -Path $fixture
+        & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture $selection
+        Assert ($LASTEXITCODE -eq 0) "Windows $selection profile provisions with mocks"
+        $events = Get-Content -Raw "$fixture/events.txt"
+        Assert (-not (Test-Path "$fixture/.codex") -and -not (Test-Path "$fixture/.claude")) 'Agent settings require explicit selection'
+        if ($selection -eq 'Base') {
+            Assert ($events -notmatch 'rustup|rustc|cargo|rust-analyzer|claude|codex') 'Windows base excludes Rust and agents'
+        } else {
+            Assert ($events -match 'cargo build' -and $events -match 'rust-analyzer') 'Windows Rust selection exercises linker and extensions'
+        }
+        & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture $selection -Agents -Inspect
+        Assert ($LASTEXITCODE -eq 0) "Windows $selection check completes"
+        $events = Get-Content -Raw "$fixture/events.txt"
+        Assert ($events -notmatch 'cargo (init|build|install)|rustup component add|code --install|claude mcp add') 'Windows checks never provision selected features'
+        Assert (-not (Test-Path "$fixture/.codex") -and -not (Test-Path "$fixture/.claude")) 'Windows checks do not create selected agent settings'
+    }
+
     # Helpers invoke these functions, so no real auth lookup or agent can run.
     function gh {
         $global:LASTEXITCODE = 0

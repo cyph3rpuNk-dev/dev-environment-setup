@@ -79,24 +79,33 @@ run_bootstrap() {
   # HOME is set only in this child environment; the test runner's home is untouched.
   env HOME="$TEST_ROOT/user" PATH="$TEST_ROOT/mock-bin:/usr/bin:/bin" bash "$ROOT/bootstrap-wsl.sh" "$@"
 }
-run_bootstrap --no-dnf > "$TEST_ROOT/first.log"
+run_bootstrap --no-dnf > "$TEST_ROOT/base.log"
+[ ! -e "$TEST_ROOT/user/.codex" ] && [ ! -e "$TEST_ROOT/user/.claude" ] || fail 'base wrote agent configuration'
+if grep -Eq '^(rustup|rustc|cargo|claude|codex|curl) |rust-analyzer|gtk4-devel|systemd-devel|libadwaita-devel' "$TEST_EVENTS"; then fail 'base invoked optional stack or agents'; fi
+: > "$TEST_EVENTS"
+if run_bootstrap --stack=unknown > "$TEST_ROOT/invalid.log" 2>&1; then fail 'unknown stack accepted'; fi
+[ ! -s "$TEST_EVENTS" ] || fail 'invalid stack performed work'
+pass 'Base excludes optional stacks and agents; invalid stack fails before work'
+run_bootstrap --no-dnf --stack=rust --configure-agents > "$TEST_ROOT/first.log"
+grep -q '^rustup component add' "$TEST_EVENTS" || fail 'Rust selection skipped components'
+grep -q 'rust-analyzer' "$TEST_EVENTS" || fail 'Rust selection skipped extensions'
 cp "$TEST_ROOT/user/.codex/config.toml" "$TEST_ROOT/config.before"
 cp "$TEST_ROOT/user/.claude/settings.json" "$TEST_ROOT/settings.before"
-run_bootstrap --no-dnf > "$TEST_ROOT/second.log"
+run_bootstrap --no-dnf --stack=rust --configure-agents > "$TEST_ROOT/second.log"
 cmp -s "$TEST_ROOT/config.before" "$TEST_ROOT/user/.codex/config.toml" || fail 'Codex config changed on rerun'
 cmp -s "$TEST_ROOT/settings.before" "$TEST_ROOT/user/.claude/settings.json" || fail 'Claude config changed on rerun'
 [ "$(grep -c '^\[mcp_servers.github\]' "$TEST_ROOT/user/.codex/config.toml")" -eq 1 ] || fail 'GitHub table duplicated'
 if grep -Eq '^(sudo|dnf) ' "$TEST_EVENTS"; then fail '--no-dnf invoked privilege escalation'; fi
 pass 'First run and rerun preserve configuration and honor --no-dnf'
 : > "$TEST_EVENTS"
-run_bootstrap --doctor > "$TEST_ROOT/doctor.log"
+run_bootstrap --doctor --stack=rust --configure-agents > "$TEST_ROOT/doctor.log"
 cmp -s "$TEST_ROOT/config.before" "$TEST_ROOT/user/.codex/config.toml" || fail 'Doctor changed config'
 if grep -Eq '^(sudo|dnf|curl) |^cargo (install|binstall)|^code --install|^claude mcp add|^gh auth setup-git' "$TEST_EVENTS"; then fail 'Doctor invoked mutation'; fi
 pass 'Doctor performs no provisioning or configuration writes'
 if run_bootstrap --no-dnf --install-browser-bridge > "$TEST_ROOT/conflict.log" 2>&1; then fail 'conflicting options accepted'; fi
 pass 'Conflicting privilege options fail before provisioning'
 rm -- "$TEST_ROOT/mock-bin/rustup"
-if run_bootstrap --no-dnf > "$TEST_ROOT/download.log" 2>&1; then fail 'download failure returned success'; fi
+if run_bootstrap --no-dnf --stack=rust > "$TEST_ROOT/download.log" 2>&1; then fail 'download failure returned success'; fi
 [ ! -e "$TEST_EVENTS.executed" ] || fail 'partial installer executed'
 grep -q 'rustup install failed' "$TEST_ROOT/download.log" || fail 'download failure not diagnosed'
 pass 'Failed partial download is not executed and bootstrap returns failure'

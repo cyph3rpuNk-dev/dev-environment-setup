@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# bootstrap-wsl.sh : dev environment for razer-control-secureblue
+# bootstrap-wsl.sh : project-neutral Fedora development tools
 # Target: Fedora inside WSL2 (WSLg). Safe to run more than once.
 #
-#   bash bootstrap-wsl.sh              # install tools and agent configuration
+#   bash bootstrap-wsl.sh              # install base tools and general extensions
 #   bash bootstrap-wsl.sh --no-dnf     # skip system packages (no sudo needed)
 #   bash bootstrap-wsl.sh --install-browser-bridge # also install/upgrade browser bridge
 #   bash bootstrap-wsl.sh --check      # report what's installed, change nothing
@@ -18,13 +18,18 @@ CHECK_ONLY=0
 SKIP_DNF=0
 DOCTOR=0
 INSTALL_BROWSER_BRIDGE=0
+STACK=base
+CONFIGURE_AGENTS=0
 for arg in "$@"; do
   case "$arg" in
+    --stack=base) STACK=base ;;
+    --stack=rust) STACK=rust ;;
+    --configure-agents) CONFIGURE_AGENTS=1 ;;
     --check)   CHECK_ONLY=1 ;;
     --doctor)  CHECK_ONLY=1; DOCTOR=1 ;;
     --no-dnf)  SKIP_DNF=1 ;;
     --install-browser-bridge) INSTALL_BROWSER_BRIDGE=1 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,12p' "$0"; echo 'Options: --stack=base|--stack=rust --configure-agents'; exit 0 ;;
     *) echo "unknown option: $arg"; exit 1 ;;
   esac
 done
@@ -43,12 +48,8 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 # ---------------------------------------------------------------------------
 say "1. System packages (dnf)"
-# gtk4/libadwaita: the desktop crate.  dbus: the ksni tray.  systemd-devel:
-# libudev, needed by hidapi when you build --features hidraw-backend.
-# jq: required by the Claude Code hooks.  ImageMagick + xdotool: the
-# run-desktop-ui skill's screenshot/drive steps. curl downloads the official
-# rustup installer on a first run.
-PKGS="gcc pkg-config gtk4-devel libadwaita-devel dbus-devel systemd-devel jq ImageMagick xdotool curl git gh"
+PKGS="curl git gh"
+if [ "$STACK" = rust ]; then PKGS="$PKGS gcc pkg-config"; fi
 
 if [ "$CHECK_ONLY" = 1 ] || [ "$SKIP_DNF" = 1 ]; then
   skip "not installing system packages"
@@ -71,6 +72,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+if [ "$STACK" = rust ]; then
 say "2. Rust toolchain"
 if have rustup; then
   ok "rustup $(rustup --version 2>/dev/null | head -1)"
@@ -100,17 +102,7 @@ if have rustup && [ "$CHECK_ONLY" = 0 ]; then
 fi
 have rustc && ok "$(rustc --version)" || bad "rustc not on PATH (open a new shell and rerun)"
 
-# razer-control-secureblue is edition 2024, which needs Rust 1.85 or newer.
-if have rustc; then
-  RV=$(rustc --version | awk '{print $2}' | cut -d- -f1)
-  RMAJ=$(echo "$RV" | cut -d. -f1); RMIN=$(echo "$RV" | cut -d. -f2)
-  if [ "$RMAJ" -gt 1 ] || { [ "$RMAJ" -eq 1 ] && [ "$RMIN" -ge 85 ]; }; then
-    ok "rust $RV supports edition 2024"
-  else
-    bad "rust $RV is too old for edition 2024 (need 1.85+). Run: rustup update stable"
-  fi
-fi
-
+# Toolchain version requirements belong to each project.
 # ---------------------------------------------------------------------------
 say "3. Cargo tools"
 # cargo-binstall downloads prebuilt binaries instead of compiling each tool
@@ -137,7 +129,7 @@ if have cargo; then
   install_tool cargo-nextest cargo-nextest "better test runner"
   install_tool cargo-audit   cargo-audit   "RUSTSEC advisories, used by check.sh"
   install_tool cargo-machete cargo-machete "unused deps, used by check.sh"
-  install_tool cargo-deny    cargo-deny    "licence policy (GPL-2.0-only)"
+  install_tool cargo-deny    cargo-deny    "dependency policy"
   install_tool bacon         bacon         "background clippy while an agent edits"
   install_tool typos         typos-cli     "typo check for the docs"
 else
@@ -145,12 +137,13 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+fi # Optional Rust stack
+
 say "4. VS Code extensions (WSL side)"
-EXTS="rust-lang.rust-analyzer vadimcn.vscode-lldb tamasfe.even-better-toml \
-fill-labs.dependi usernamehw.errorlens timonwong.shellcheck ms-vscode.hexeditor \
-github.vscode-github-actions github.vscode-pull-request-github redhat.vscode-yaml \
-eamodio.gitlens gruntfuggly.todo-tree streetsidesoftware.code-spell-checker \
-bierner.markdown-mermaid"
+EXTS="timonwong.shellcheck ms-vscode.hexeditor usernamehw.errorlens github.vscode-github-actions github.vscode-pull-request-github redhat.vscode-yaml eamodio.gitlens gruntfuggly.todo-tree streetsidesoftware.code-spell-checker bierner.markdown-mermaid"
+if [ "$STACK" = rust ]; then
+  EXTS="$EXTS rust-lang.rust-analyzer vadimcn.vscode-lldb tamasfe.even-better-toml fill-labs.dependi"
+fi
 
 if ! have code; then
   warn "'code' is not on PATH."
@@ -170,6 +163,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+if [ "$CONFIGURE_AGENTS" = 1 ]; then
 say "5. Agent CLIs"
 have claude && ok "claude $(claude --version 2>/dev/null | head -1)" \
   || warn "claude CLI not found. Install it, then run 'claude' once to sign in."
@@ -199,6 +193,8 @@ elif [ -f "$HOME/.codex/config.toml" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+fi # Optional agent defaults
+
 say "6. GitHub credentials and browser sign-in"
 # The optional bridge opens web URLs in the Windows default browser.
 PS_EXE="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
@@ -266,6 +262,7 @@ if grep -q 'GITHUB_MCP_PAT' "$HOME/.bashrc" 2>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------
+if [ "$CONFIGURE_AGENTS" = 1 ]; then
 say "7. MCP servers"
 
 # --- Claude Code -----------------------------------------------------------
@@ -327,12 +324,7 @@ else
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
-    "allow": [
-      "Bash(cargo fmt *)",
-      "Bash(cargo tree *)",
-      "Bash(cargo metadata *)",
-      "Bash(rustup show *)"
-    ],
+    "allow": [],
     "deny": [
       "Read(**/.env)",
       "Read(**/*.pfx)",
@@ -349,17 +341,23 @@ JSON
 fi
 
 # ---------------------------------------------------------------------------
+fi # Optional agent configuration
+
 if [ "$DOCTOR" = 1 ]; then
   say "9. Doctor: environment boundaries and usable configuration"
   if grep -qi microsoft /proc/version 2>/dev/null; then ok "WSL kernel detected"; else warn "WSL kernel not detected"; fi
   case "$PWD" in /mnt/*) warn "Current directory is on a mounted Windows filesystem; keep Linux builds under ~/src";; *) ok "Current directory is on the Linux filesystem";; esac
-  if have rustup; then
+  if [ "$STACK" = rust ] && have rustup; then
     COMPONENTS=$(rustup component list --installed 2>/dev/null || true)
     case "$COMPONENTS" in *rustfmt*clippy*|*clippy*rustfmt*) ok "rustfmt and clippy installed";; *) warn "rustfmt or clippy missing";; esac
   fi
+  if [ "$STACK" = rust ]; then
   if have code && code --list-extensions 2>/dev/null | grep -qix 'rust-lang.rust-analyzer'; then ok "WSL VS Code rust-analyzer installed"; else warn "WSL VS Code rust-analyzer not detected"; fi
+  fi
+  if [ "$CONFIGURE_AGENTS" = 1 ]; then
   [ -f "$HOME/.codex/config.toml" ] && ok "Codex user configuration exists" || warn "Codex user configuration missing"
   [ -f "$HOME/.claude/settings.json" ] && ok "Claude user settings exist" || warn "Claude user settings missing"
+  fi
   if have gh && gh auth status --hostname github.com --active >/dev/null 2>&1; then ok "GitHub CLI authentication works"; else warn "GitHub CLI authentication is unavailable"; fi
   echo "  Doctor does not verify VS Code profile names or agent sign-in state; see doctor/README.md."
 fi
@@ -371,25 +369,5 @@ if [ "$FAIL" -eq 0 ]; then
 else
   echo "  $FAIL problem(s) above need attention."
 fi
-cat <<'NEXT'
-
-  Still to do by hand (these cannot be scripted):
-    1. Run 'claude' and 'codex' once each and sign in.
-    2. Add plugins or skills only when a real project workflow requires them.
-       They are optional and expand the tools an agent can use.
-    3. In VS Code settings (user scope, not workspace):
-         Claude Code > Initial Permission Mode  ->  plan
-         Claude Code > Preferred Location       ->  sidebar
-    4. Create the four Rust and General profiles from profiles/, then adjust only
-       personal preferences. Keep exported profiles in a private backup.
-    5. Clone razer-control-secureblue into ~/src (NOT under /mnt/c).
-    6. Authenticate GitHub CLI when you need GitHub access:
-         gh auth login --hostname github.com --git-protocol https --web
-       Then launch Codex with helpers/codex-with-github-mcp.sh. The helper
-       supplies the token to Codex and its child processes without persisting it.
-       Claude's PAT-backed GitHub MCP is not configured automatically.
-    7. Follow START-HERE.md for the two existing repositories or NEW-PROJECT.md
-       for a new project.
-
-NEXT
+echo "Next: START-HERE.md for base readiness; docs/stacks/ for optional stacks; docs/projects/ for project guides."
 exit "$FAIL"
