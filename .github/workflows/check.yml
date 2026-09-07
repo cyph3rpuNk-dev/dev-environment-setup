@@ -19,9 +19,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Run offline repository gate
-        shell: ${{ matrix.shell }}
+      - name: Run offline gate with Windows PowerShell
+        if: matrix.shell == 'powershell'
+        shell: powershell
+        run: ./scripts/check.ps1
+      - name: Run offline gate with PowerShell 7
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
         run: ./scripts/check.ps1

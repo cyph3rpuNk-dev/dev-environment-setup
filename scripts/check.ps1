@@ -39,7 +39,16 @@ try {
     }
     Step 'PowerShell regression tests' { & $shellExe -NoProfile -File tests/test-powershell.ps1 }
     Step 'Bash regression tests' { & $bash tests/test-bash.sh }
-    Step 'Whitespace' { git diff --check }
+    Step 'Whitespace' {
+        # Compare the effective tracked tree with Git's empty tree. A plain
+        # `git diff --check` is a no-op on a clean CI checkout.
+        $nullDevice = if ($env:OS -eq 'Windows_NT') { 'NUL' } else { '/dev/null' }
+        $emptyTree = ((git hash-object -t tree -- $nullDevice) | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($emptyTree)) {
+            throw 'Could not determine the empty Git tree'
+        }
+        git diff --check $emptyTree --
+    }
 }
 finally { Pop-Location }
 exit $failures

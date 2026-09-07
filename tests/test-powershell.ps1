@@ -32,6 +32,39 @@ try {
     & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1"
     Assert ($LASTEXITCODE -eq 1) 'Gate counts native failure without contaminating later cmdlets'
 
+    # A clean checkout has no ordinary `git diff`, so exercise the real toolkit
+    # gate in a committed fixture containing trailing whitespace.
+    $whitespaceRoot = Join-Path $testRoot 'committed-whitespace'
+    foreach ($directory in @('scripts', 'helpers', 'tests', 'profiles', 'templates/foundation')) {
+        $null = New-Item -ItemType Directory -Path (Join-Path $whitespaceRoot $directory) -Force
+    }
+    Copy-Item -LiteralPath "$root/scripts/check.ps1" -Destination "$whitespaceRoot/scripts/check.ps1"
+    foreach ($file in @('bootstrap.ps1', 'helpers/helper.ps1')) {
+        [IO.File]::WriteAllText((Join-Path $whitespaceRoot $file), "# syntax fixture`n", $utf8)
+    }
+    [IO.File]::WriteAllText("$whitespaceRoot/tests/test-powershell.ps1", "exit 0`n", $utf8)
+    foreach ($file in @('bootstrap.sh', 'helpers/helper.sh', 'tests/test-bash.sh', 'templates/foundation/check.sh.template')) {
+        [IO.File]::WriteAllText((Join-Path $whitespaceRoot $file), "exit 0`n", $utf8)
+    }
+    [IO.File]::WriteAllText("$whitespaceRoot/profiles/fixture.jsonc", "{}`n", $utf8)
+    [IO.File]::WriteAllText("$whitespaceRoot/trailing.txt", "committed whitespace  `n", $utf8)
+    Push-Location -LiteralPath $whitespaceRoot
+    try {
+        git init --quiet
+        $null = New-Item -ItemType Directory -Path "$whitespaceRoot/no-hooks"
+        git config core.autocrlf false
+        git config core.hooksPath "$whitespaceRoot/no-hooks"
+        git config commit.gpgsign false
+        git config user.name fixture
+        git config user.email fixture@example.invalid
+        git add --all
+        git commit --quiet -m fixture
+        & $shellExe -NoProfile -File "$whitespaceRoot/scripts/check.ps1"
+        Assert ($LASTEXITCODE -eq 1) 'Toolkit gate rejects committed whitespace in a clean checkout'
+        Assert ([string]::IsNullOrWhiteSpace((git status --porcelain))) 'Whitespace fixture remains clean after validation'
+    }
+    finally { Pop-Location }
+
     # Helpers invoke these functions, so no real auth lookup or agent can run.
     function gh {
         $global:LASTEXITCODE = 0
