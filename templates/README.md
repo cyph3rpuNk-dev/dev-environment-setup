@@ -17,9 +17,12 @@ security invariant, destructive command, release process, or production credenti
 3. Copy `foundation/AGENTS.md.template` to `AGENTS.md` and replace its placeholders.
 4. Copy `foundation/CLAUDE.md.template` to `CLAUDE.md` if Claude Code will be used.
    Keep it tracked only when repository policy permits it.
-5. Copy one gate template. Replace the command placeholders, run each command
-   independently, and make the completed gate the command used by CI, VS Code tasks,
-   and agent instructions.
+5. Copy one gate template to `scripts/check.ps1` or `scripts/check.sh`. These
+   templates resolve the repository root as the parent of `scripts/`. If the
+   repository uses another destination, adjust that root calculation. Replace
+   each command placeholder with one command; give separate commands separate
+   steps so a later success cannot hide an earlier failure. Run each command
+   independently, and use the completed gate in CI, VS Code and agent instructions.
 6. For Rust repositories, add `rust/rust-toolchain.toml.template` only after choosing
    the channel or exact version from a documented compatibility policy.
 7. Add repository-specific hooks and rules only when a real invariant needs

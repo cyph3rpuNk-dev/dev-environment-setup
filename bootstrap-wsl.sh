@@ -3,27 +3,35 @@
 # bootstrap-wsl.sh : dev environment for razer-control-secureblue
 # Target: Fedora inside WSL2 (WSLg). Safe to run more than once.
 #
-#   bash bootstrap-wsl.sh              # do everything
+#   bash bootstrap-wsl.sh              # install tools and agent configuration
 #   bash bootstrap-wsl.sh --no-dnf     # skip system packages (no sudo needed)
+#   bash bootstrap-wsl.sh --install-browser-bridge # also install/upgrade browser bridge
 #   bash bootstrap-wsl.sh --check      # report what's installed, change nothing
 #   bash bootstrap-wsl.sh --doctor     # check WSL, agents, credentials, and extensions
 #
-# It never deletes anything and never touches your repositories.
+# It removes only its staged installer download; project repositories are untouched.
 # ---------------------------------------------------------------------------
-set -u
+set -uo pipefail
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd) || exit 1
 
 CHECK_ONLY=0
 SKIP_DNF=0
 DOCTOR=0
+INSTALL_BROWSER_BRIDGE=0
 for arg in "$@"; do
   case "$arg" in
     --check)   CHECK_ONLY=1 ;;
     --doctor)  CHECK_ONLY=1; DOCTOR=1 ;;
     --no-dnf)  SKIP_DNF=1 ;;
+    --install-browser-bridge) INSTALL_BROWSER_BRIDGE=1 ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg"; exit 1 ;;
   esac
 done
+if [ "$SKIP_DNF" = 1 ] && [ "$INSTALL_BROWSER_BRIDGE" = 1 ]; then
+  echo '--no-dnf cannot be combined with --install-browser-bridge (requires sudo).' >&2
+  exit 2
+fi
 
 FAIL=0
 say()  { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
@@ -45,7 +53,7 @@ PKGS="gcc pkg-config gtk4-devel libadwaita-devel dbus-devel systemd-devel jq Ima
 if [ "$CHECK_ONLY" = 1 ] || [ "$SKIP_DNF" = 1 ]; then
   skip "not installing system packages"
   for p in $PKGS; do
-    rpm -q "$p" >/dev/null 2>&1 && ok "$p" || warn "$p is missing"
+    rpm -q "$p" >/dev/null 2>&1 && ok "$p" || bad "$p is missing"
   done
 elif ! have dnf; then
   bad "dnf not found. This script expects a Fedora WSL distro."
@@ -70,21 +78,25 @@ elif [ "$CHECK_ONLY" = 1 ]; then
   warn "rustup not installed"
 else
   echo "  installing rustup from https://rustup.rs ..."
-  if curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path; then
+  # Do not execute a failed or partial download.
+  RUSTUP_INSTALLER=$(mktemp) || exit 1
+  if curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "$RUSTUP_INSTALLER" &&
+      sh "$RUSTUP_INSTALLER" -y --no-modify-path; then
     # shellcheck disable=SC1091
-    . "$HOME/.cargo/env"
-    ok "rustup installed"
+    if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
+    have rustup && ok "rustup installed" || bad "rustup installer completed but rustup is unavailable"
   else
     bad "rustup install failed"
   fi
+  rm -f -- "$RUSTUP_INSTALLER"
 fi
 
 # Make sure this shell can see cargo even on a first run.
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
 if have rustup && [ "$CHECK_ONLY" = 0 ]; then
-  rustup component add rustfmt clippy >/dev/null 2>&1 && ok "rustfmt + clippy" \
-    || warn "could not add rustfmt/clippy (may already be present)"
+  rustup component add rustfmt clippy && ok "rustfmt + clippy" \
+    || bad "could not add rustfmt/clippy"
 fi
 have rustc && ok "$(rustc --version)" || bad "rustc not on PATH (open a new shell and rerun)"
 
@@ -108,18 +120,18 @@ install_tool() {
   if have "$bin"; then ok "$bin already installed ($why)"; return; fi
   if [ "$CHECK_ONLY" = 1 ]; then warn "$bin is missing ($why)"; return; fi
   if have cargo-binstall; then
-    cargo binstall -y --no-confirm "$crate" >/dev/null 2>&1 && { ok "$bin installed ($why)"; return; }
+    cargo binstall -y --no-confirm "$crate" && { ok "$bin installed ($why)"; return; }
     warn "binstall failed for $crate, falling back to source build"
   fi
   echo "  building $crate from source, this can take a few minutes ..."
-  cargo install --locked "$crate" >/dev/null 2>&1 && ok "$bin installed ($why)" \
+  cargo install --locked "$crate" && ok "$bin installed ($why)" \
     || bad "could not install $crate"
 }
 
 if have cargo; then
   if ! have cargo-binstall && [ "$CHECK_ONLY" = 0 ]; then
     echo "  installing cargo-binstall (makes everything below much faster) ..."
-    cargo install cargo-binstall --locked >/dev/null 2>&1 && ok "cargo-binstall" \
+    cargo install cargo-binstall --locked && ok "cargo-binstall" \
       || warn "cargo-binstall unavailable; tools will build from source"
   fi
   install_tool cargo-nextest cargo-nextest "better test runner"
@@ -151,8 +163,8 @@ else
     elif [ "$CHECK_ONLY" = 1 ]; then
       warn "$e is missing"
     else
-      code --install-extension "$e" --force >/dev/null 2>&1 && ok "$e installed" \
-        || warn "could not install $e (check the name in the Extensions view)"
+      code --install-extension "$e" --force && ok "$e installed" \
+        || bad "could not install $e (check the name in the Extensions view)"
     fi
   done
 fi
@@ -166,8 +178,7 @@ have codex  && ok "codex $(codex --version 2>/dev/null | head -1)" \
 
 # Codex defaults. Written only if the file is absent.
 if [ "$CHECK_ONLY" = 0 ] && [ ! -f "$HOME/.codex/config.toml" ]; then
-  mkdir -p "$HOME/.codex"
-  cat > "$HOME/.codex/config.toml" <<'TOML'
+  if mkdir -p "$HOME/.codex" && cat > "$HOME/.codex/config.toml" <<'TOML'
 # Codex owns whole tasks here, same as Claude Code, so it can write.
 # approval_policy = "on-request" keeps commands asking before they run;
 # that is the brake, not a read-only sandbox.
@@ -181,41 +192,31 @@ sandbox_mode = "workspace-write"
 [mcp_servers.context7]
 url = "https://mcp.context7.com/mcp"
 TOML
-  ok "wrote ~/.codex/config.toml"
+  then ok "wrote ~/.codex/config.toml"
+  else bad "could not write ~/.codex/config.toml"; fi
 elif [ -f "$HOME/.codex/config.toml" ]; then
   skip "~/.codex/config.toml already exists, left alone"
 fi
 
 # ---------------------------------------------------------------------------
 say "6. GitHub credentials and browser sign-in"
-# WSL ships no browser. Without one, "gh auth login --web" and every other
-# browser-based flow exits with little or no explanation, which reads as a hang.
-# Fedora has no wslu package, so install a minimal shim that hands URLs to the
-# Windows default browser.
+# The optional bridge opens web URLs in the Windows default browser.
 PS_EXE="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-if [ -x /usr/local/bin/wslview ]; then
-  ok "browser bridge present (/usr/local/bin/wslview)"
-elif [ "$CHECK_ONLY" = 1 ]; then
-  warn "no browser bridge; browser sign-in flows will fail with no useful error"
+if [ "$CHECK_ONLY" = 1 ] || [ "$INSTALL_BROWSER_BRIDGE" = 0 ]; then
+  if cmp -s "$SCRIPT_DIR/helpers/wslview.sh" /usr/local/bin/wslview && [ -x /usr/local/bin/wslview ]; then
+    ok "current browser bridge present"
+  else
+    warn "browser bridge absent, legacy, or custom; use --install-browser-bridge to install/upgrade the toolkit bridge"
+  fi
 elif [ ! -x "$PS_EXE" ]; then
-  warn "powershell.exe not reachable from WSL; cannot install the browser bridge"
+  bad "powershell.exe not reachable from WSL; cannot install the browser bridge"
 else
-  sudo tee /usr/local/bin/wslview >/dev/null <<'SHIM'
-#!/usr/bin/env bash
-# Hand a URL to the Windows default browser. WSL has no browser of its own.
-set -euo pipefail
-if [ $# -lt 1 ]; then
-  echo "usage: wslview <url>" >&2
-  exit 2
-fi
-exec /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe \
-     -NoProfile -NonInteractive -Command "Start-Process '$1'" >/dev/null 2>&1
-SHIM
-  sudo chmod 0755 /usr/local/bin/wslview
-  sudo ln -sf /usr/local/bin/wslview /usr/local/bin/xdg-open
-  printf 'export BROWSER=/usr/local/bin/wslview\n' | sudo tee /etc/profile.d/wsl-browser.sh >/dev/null
-  sudo chmod 0644 /etc/profile.d/wsl-browser.sh
-  ok "browser bridge installed (open a new shell so BROWSER is exported)"
+  # shellcheck source=helpers/install-browser-bridge.sh
+  . "$SCRIPT_DIR/helpers/install-browser-bridge.sh"
+  if install_browser_bridge "$SCRIPT_DIR/helpers/wslview.sh" /usr/local/bin /etc/profile.d; then
+    export BROWSER=/usr/local/bin/wslview
+    ok "browser bridge installed and verified (new login shells also set BROWSER)"
+  else bad "browser bridge installation failed; existing custom handlers are preserved"; fi
 fi
 
 # A PAT must never be written to ~/.bashrc. This script checks GitHub CLI
@@ -277,7 +278,7 @@ else
     ok "claude: context7 already configured"
   else
     claude mcp add --transport http --scope user context7 https://mcp.context7.com/mcp \
-      >/dev/null 2>&1 && ok "claude: context7 added" || warn "claude: could not add context7"
+      && ok "claude: context7 added" || bad "claude: could not add context7"
   fi
 
   if claude mcp list 2>/dev/null | grep -q github; then
@@ -299,14 +300,15 @@ elif [ ! -f "$CODEX_CFG" ]; then
 elif grep -q '\[mcp_servers.github\]' "$CODEX_CFG"; then
   ok "codex: github already in config.toml"
 elif [ "$GITHUB_AUTHENTICATED" = 1 ]; then
-  cat >> "$CODEX_CFG" <<'TOML'
+  if cat >> "$CODEX_CFG" <<'TOML'
 
 [mcp_servers.github]
 url = "https://api.githubcopilot.com/mcp/"
 # Read from the process environment. Launch with helpers/codex-with-github-mcp.sh.
 bearer_token_env_var = "GITHUB_MCP_PAT"
 TOML
-  ok "codex: github added to config.toml"
+  then ok "codex: github added to config.toml"
+  else bad "could not append GitHub configuration"; fi
 else
   skip "codex: github needs an authenticated GitHub CLI session"
 fi
@@ -321,8 +323,7 @@ if [ "$CHECK_ONLY" = 1 ]; then
 elif [ -f "$CC_SETTINGS" ]; then
   skip "$CC_SETTINGS already exists, left alone (see guide 5.3 for the block to merge)"
 else
-  mkdir -p "$HOME/.claude"
-  cat > "$CC_SETTINGS" <<'JSON'
+  if mkdir -p "$HOME/.claude" && cat > "$CC_SETTINGS" <<'JSON'
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
@@ -343,7 +344,8 @@ else
   "autoMemoryEnabled": true
 }
 JSON
-  ok "wrote $CC_SETTINGS"
+  then ok "wrote $CC_SETTINGS"
+  else bad "could not write $CC_SETTINGS"; fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -365,7 +367,7 @@ fi
 # ---------------------------------------------------------------------------
 say "Summary"
 if [ "$FAIL" -eq 0 ]; then
-  echo "  No failures."
+  echo "  No required failures. Review warnings and manual checks below."
 else
   echo "  $FAIL problem(s) above need attention."
 fi
@@ -384,7 +386,7 @@ cat <<'NEXT'
     6. Authenticate GitHub CLI when you need GitHub access:
          gh auth login --hostname github.com --git-protocol https --web
        Then launch Codex with helpers/codex-with-github-mcp.sh. The helper
-       exposes the token only to that Codex process.
+       supplies the token to Codex and its child processes without persisting it.
        Claude's PAT-backed GitHub MCP is not configured automatically.
     7. Follow START-HERE.md for the two existing repositories or NEW-PROJECT.md
        for a new project.

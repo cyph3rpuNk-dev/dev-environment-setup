@@ -82,10 +82,15 @@ Inside the Fedora terminal, run:
 
 ```bash
 cd /mnt/c/Dev-Setup
-bash bootstrap-wsl.sh
+bash bootstrap-wsl.sh --install-browser-bridge
 ```
 
 Enter your Fedora password if asked.
+
+Open a new login shell after installation, or run
+`export BROWSER=/usr/local/bin/wslview` before browser sign-in. The bridge option
+preserves custom handlers. To skip all sudo operations, use `--no-dnf` without the
+bridge option.
 
 Then install Claude Code and Codex inside Fedora too, and sign in:
 

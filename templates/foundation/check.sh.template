@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # The repository's one local health gate. Replace each placeholder with a command
 # already used or deliberately approved by this repository's CI.
-set -u
+set -uo pipefail
+# Copy this gate to scripts/check.sh. Each placeholder is one simple command.
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." || exit 1
 
 failures=0
 step() {

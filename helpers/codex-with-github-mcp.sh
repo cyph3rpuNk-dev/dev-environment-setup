@@ -13,5 +13,9 @@ if ! gh auth status --hostname github.com --active >/dev/null 2>&1; then
 fi
 
 GITHUB_MCP_PAT="$(gh auth token --hostname github.com)"
+if [ -z "$GITHUB_MCP_PAT" ]; then
+  echo "GitHub CLI did not provide a token." >&2
+  exit 1
+fi
 export GITHUB_MCP_PAT
 exec codex "$@"

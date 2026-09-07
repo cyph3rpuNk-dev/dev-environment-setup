@@ -3,12 +3,22 @@
 [CmdletBinding()]
 param()
 
-$ErrorActionPreference = 'Continue'
+# Copy this gate to scripts/check.ps1. Each placeholder is one command;
+# split multiple native commands into separate Steps so none masks another.
+$ErrorActionPreference = 'Stop'
+Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 $failures = 0
 function Step([string]$Name, [scriptblock]$Action) {
     Write-Host "`n== $Name =="
-    & $Action
-    if ($LASTEXITCODE -ne 0) { $script:failures++ }
+    $global:LASTEXITCODE = 0
+    try {
+        & $Action
+        if ($LASTEXITCODE -ne 0) { throw "Native command exited with $LASTEXITCODE" }
+    }
+    catch {
+        $script:failures++
+        Write-Host "FAIL: $_"
+    }
 }
 
 Step 'format' { {{FORMAT_COMMAND}} }
