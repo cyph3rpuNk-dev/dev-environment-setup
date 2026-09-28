@@ -1,0 +1,511 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# bootstrap-linux.sh : project-neutral Linux development tools
+# Runs on native Linux and inside WSL. Supports Fedora/RHEL (dnf) and
+# Debian/Ubuntu (apt). Safe to run more than once.
+#
+#   bash bootstrap-linux.sh                    # base tools and general extensions
+#   bash bootstrap-linux.sh --check            # report only, change nothing
+#   bash bootstrap-linux.sh --doctor           # check plus environment diagnostics
+#   bash bootstrap-linux.sh --stack=rust,python  # add optional stacks
+#   bash bootstrap-linux.sh --configure-agents # create missing agent defaults and MCP config
+#   bash bootstrap-linux.sh --no-sudo          # never use sudo; report missing packages
+#   bash bootstrap-linux.sh --install-browser-bridge
+#                                              # WSL only: open sign-in URLs in Windows
+#
+# It removes only its staged installer downloads; project repositories are untouched.
+# ---------------------------------------------------------------------------
+set -uo pipefail
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd) || exit 1
+
+usage() { sed -n '3,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+
+CHECK_ONLY=0
+NO_SUDO=0
+DOCTOR=0
+INSTALL_BROWSER_BRIDGE=0
+CONFIGURE_AGENTS=0
+WANT_RUST=0
+WANT_PYTHON=0
+add_stacks() {
+  local list="$1" s
+  IFS=',' read -r -a _stacks <<< "$list"
+  for s in "${_stacks[@]}"; do
+    case "$s" in
+      base) ;;
+      rust) WANT_RUST=1 ;;
+      python) WANT_PYTHON=1 ;;
+      *) echo "unknown stack: $s (choose base, rust, python)" >&2; exit 1 ;;
+    esac
+  done
+}
+for arg in "$@"; do
+  case "$arg" in
+    --stack=*) add_stacks "${arg#--stack=}" ;;
+    --configure-agents) CONFIGURE_AGENTS=1 ;;
+    --check)   CHECK_ONLY=1 ;;
+    --doctor)  CHECK_ONLY=1; DOCTOR=1 ;;
+    --no-sudo|--no-dnf) NO_SUDO=1 ;;   # --no-dnf is the pre-Linux-support name
+    --install-browser-bridge) INSTALL_BROWSER_BRIDGE=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $arg" >&2; usage >&2; exit 1 ;;
+  esac
+done
+
+# Platform detection reads files only. The overrides exist for the offline tests.
+PROC_VERSION=${DEVSETUP_PROC_VERSION:-/proc/version}
+OS_RELEASE=${DEVSETUP_OS_RELEASE:-/etc/os-release}
+IS_WSL=0
+if grep -qi microsoft "$PROC_VERSION" 2>/dev/null; then IS_WSL=1; fi
+os_field() { sed -n "s/^$1=//p" "$OS_RELEASE" 2>/dev/null | head -n 1 | tr -d "\"'"; }
+DISTRO_ID=$(os_field ID)
+DISTRO_LIKE=$(os_field ID_LIKE)
+DISTRO_NAME=$(os_field PRETTY_NAME)
+case " $DISTRO_ID $DISTRO_LIKE " in
+  *" fedora "*|*" rhel "*|*" centos "*) PKG_MGR=dnf ;;
+  *" debian "*|*" ubuntu "*) PKG_MGR=apt ;;
+  *) PKG_MGR=none ;;
+esac
+
+if [ "$INSTALL_BROWSER_BRIDGE" = 1 ] && [ "$IS_WSL" = 0 ]; then
+  echo '--install-browser-bridge is only for WSL; native Linux already has a browser.' >&2
+  exit 2
+fi
+if [ "$NO_SUDO" = 1 ] && [ "$INSTALL_BROWSER_BRIDGE" = 1 ]; then
+  echo '--no-sudo cannot be combined with --install-browser-bridge (requires sudo).' >&2
+  exit 2
+fi
+
+FAIL=0
+say()  { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
+ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
+skip() { printf '  \033[90mskip\033[0m  %s\n' "$1"; }
+warn() { printf '  \033[33mwarn\033[0m  %s\n' "$1"; }
+bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=$((FAIL + 1)); }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Download an installer to a private temporary file and run it only if the
+# download completed. A partial script is never executed.
+run_downloaded_installer() {
+  local url="$1" installer; shift
+  installer=$(mktemp) || return 1
+  if curl --proto '=https' --tlsv1.2 -LsSf "$url" -o "$installer" && sh "$installer" "$@"; then
+    rm -f -- "$installer"; return 0
+  fi
+  rm -f -- "$installer"; return 1
+}
+
+# ---------------------------------------------------------------------------
+say "0. Environment"
+if [ "$IS_WSL" = 1 ]; then ok "WSL detected${DISTRO_NAME:+ ($DISTRO_NAME)}"
+else ok "native Linux${DISTRO_NAME:+ ($DISTRO_NAME)}"; fi
+case "$PKG_MGR" in
+  none) warn "unsupported distribution '${DISTRO_ID:-unknown}': packages are checked by command name only; install them yourself" ;;
+  *) ok "package manager: $PKG_MGR" ;;
+esac
+
+# ---------------------------------------------------------------------------
+say "1. System packages"
+PKGS="curl git gh"
+if [ "$WANT_RUST" = 1 ]; then
+  if [ "$PKG_MGR" = apt ]; then PKGS="$PKGS build-essential pkg-config"; else PKGS="$PKGS gcc pkg-config"; fi
+fi
+
+pkg_installed() {
+  case "$PKG_MGR" in
+    dnf) rpm -q "$1" >/dev/null 2>&1 ;;
+    apt) dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed' ;;
+    *) case "$1" in build-essential) have gcc ;; *) have "$1" ;; esac ;;
+  esac
+}
+
+MISSING=""
+for p in $PKGS; do
+  if pkg_installed "$p"; then ok "$p"; else MISSING="$MISSING $p"; fi
+done
+if [ -z "$MISSING" ]; then
+  :
+elif [ "$CHECK_ONLY" = 1 ] || [ "$NO_SUDO" = 1 ]; then
+  for p in $MISSING; do bad "$p is missing"; done
+elif [ "$PKG_MGR" = none ]; then
+  bad "missing:$MISSING. Install them with your package manager, then rerun."
+else
+  echo "  installing:$MISSING"
+  echo "  (you will be asked for your sudo password)"
+  install_packages() {
+    # MISSING is a space-separated list of package names.
+    # shellcheck disable=SC2086
+    if [ "$PKG_MGR" = dnf ]; then sudo dnf install -y $MISSING
+    else sudo apt-get update && sudo apt-get install -y $MISSING; fi
+  }
+  if install_packages; then ok "system packages installed"
+  else bad "package installation failed; rerun with --no-sudo to continue without them"; fi
+fi
+
+# gh 2.40 added --active. Older distribution builds (for example Ubuntu 22.04 and
+# Debian 12) reject the flag, which would otherwise read as "not authenticated".
+GH_ACTIVE=1
+if have gh; then
+  GH_VERSION=$(gh --version 2>/dev/null | head -n 1 | awk '{print $3}')
+  GH_MAJOR=${GH_VERSION%%.*}; GH_REST=${GH_VERSION#*.}; GH_MINOR=${GH_REST%%.*}
+  case "$GH_MAJOR$GH_MINOR" in
+    ''|*[!0-9]*) ;;
+    *) if [ "$GH_MAJOR" -lt 2 ] || { [ "$GH_MAJOR" -eq 2 ] && [ "$GH_MINOR" -lt 40 ]; }; then
+         GH_ACTIVE=0
+         warn "GitHub CLI $GH_VERSION is older than 2.40; for a current build see https://github.com/cli/cli/blob/trunk/docs/install_linux.md"
+       fi ;;
+  esac
+fi
+gh_authenticated() {
+  if [ "$GH_ACTIVE" = 1 ]; then gh auth status --hostname github.com --active >/dev/null 2>&1
+  else gh auth status --hostname github.com >/dev/null 2>&1; fi
+}
+
+# ---------------------------------------------------------------------------
+if [ "$WANT_RUST" = 1 ]; then
+say "2. Rust toolchain"
+if have rustup; then
+  ok "rustup $(rustup --version 2>/dev/null | head -1)"
+elif [ "$CHECK_ONLY" = 1 ]; then
+  warn "rustup not installed"
+else
+  echo "  installing rustup from https://rustup.rs ..."
+  # rustup adds ~/.cargo/bin to the shell profile so new terminals find cargo.
+  if run_downloaded_installer https://sh.rustup.rs -y; then
+    # shellcheck disable=SC1091
+    if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
+    have rustup && ok "rustup installed (open a new terminal to use it)" \
+      || bad "rustup installer completed but rustup is unavailable"
+  else
+    bad "rustup install failed"
+  fi
+fi
+
+# Make sure this shell can see cargo even on a first run.
+# shellcheck disable=SC1091
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+
+if have rustup && [ "$CHECK_ONLY" = 0 ]; then
+  rustup component add rustfmt clippy && ok "rustfmt + clippy" \
+    || bad "could not add rustfmt/clippy"
+fi
+have rustc && ok "$(rustc --version)" || bad "rustc not on PATH (open a new terminal and rerun)"
+
+# Toolchain version requirements belong to each project.
+say "3. Cargo tools"
+# cargo-binstall downloads prebuilt binaries instead of compiling each tool
+# from source, which turns ~20 minutes into ~1.
+install_tool() {
+  bin="$1"; crate="$2"; why="$3"
+  if have "$bin"; then ok "$bin already installed ($why)"; return; fi
+  if [ "$CHECK_ONLY" = 1 ]; then warn "$bin is missing ($why)"; return; fi
+  if have cargo-binstall; then
+    cargo binstall -y --no-confirm "$crate" && { ok "$bin installed ($why)"; return; }
+    warn "binstall failed for $crate, falling back to source build"
+  fi
+  echo "  building $crate from source, this can take a few minutes ..."
+  cargo install --locked "$crate" && ok "$bin installed ($why)" \
+    || bad "could not install $crate"
+}
+
+if have cargo; then
+  if ! have cargo-binstall && [ "$CHECK_ONLY" = 0 ]; then
+    echo "  installing cargo-binstall (makes everything below much faster) ..."
+    cargo install cargo-binstall --locked && ok "cargo-binstall" \
+      || warn "cargo-binstall unavailable; tools will build from source"
+  fi
+  install_tool cargo-nextest cargo-nextest "better test runner"
+  install_tool cargo-audit   cargo-audit   "RUSTSEC advisories"
+  install_tool cargo-machete cargo-machete "unused dependencies"
+  install_tool cargo-deny    cargo-deny    "dependency policy"
+  install_tool bacon         bacon         "background clippy while an agent edits"
+  install_tool typos         typos-cli     "typo check for the docs"
+else
+  bad "cargo not available; skipping cargo tools"
+fi
+fi # Optional Rust stack
+
+# ---------------------------------------------------------------------------
+if [ "$WANT_PYTHON" = 1 ]; then
+say "2p. Python (uv)"
+# uv manages Python versions, virtual environments, dependencies and uv.lock per
+# project, so no system Python packages are installed here.
+if have uv; then
+  ok "$(uv --version 2>/dev/null | head -1)"
+elif [ "$CHECK_ONLY" = 1 ]; then
+  warn "uv not installed"
+else
+  echo "  installing uv from https://astral.sh/uv ..."
+  # The uv installer writes ~/.local/bin and adds it to the shell profile.
+  if run_downloaded_installer https://astral.sh/uv/install.sh; then
+    # shellcheck disable=SC1091
+    if [ -f "$HOME/.local/bin/env" ]; then . "$HOME/.local/bin/env"; fi
+    have uv && ok "uv installed (open a new terminal to use it)" \
+      || bad "uv installer completed but uv is unavailable"
+  else
+    bad "uv install failed"
+  fi
+fi
+fi # Optional Python stack
+
+# ---------------------------------------------------------------------------
+say "4. VS Code extensions"
+EXTS="timonwong.shellcheck ms-vscode.hexeditor usernamehw.errorlens github.vscode-github-actions github.vscode-pull-request-github redhat.vscode-yaml eamodio.gitlens gruntfuggly.todo-tree streetsidesoftware.code-spell-checker bierner.markdown-mermaid"
+if [ "$WANT_RUST" = 1 ]; then
+  EXTS="$EXTS rust-lang.rust-analyzer vadimcn.vscode-lldb tamasfe.even-better-toml fill-labs.dependi"
+fi
+if [ "$WANT_PYTHON" = 1 ]; then
+  EXTS="$EXTS ms-python.python charliermarsh.ruff"
+fi
+
+if ! have code; then
+  if [ "$IS_WSL" = 1 ]; then
+    warn "'code' is not on PATH. Open this folder from Windows VS Code with the WSL"
+    warn "extension, then rerun from that window's terminal so extensions land in WSL."
+  else
+    warn "'code' is not on PATH. Install VS Code (https://code.visualstudio.com/docs/setup/linux),"
+    warn "then rerun to install the editor extensions."
+  fi
+else
+  INSTALLED_EXTS=$(code --list-extensions 2>/dev/null || true)
+  for e in $EXTS; do
+    if printf '%s\n' "$INSTALLED_EXTS" | grep -qix "$e"; then
+      ok "$e"
+    elif [ "$CHECK_ONLY" = 1 ]; then
+      warn "$e is missing"
+    else
+      code --install-extension "$e" --force && ok "$e installed" \
+        || bad "could not install $e (check the name in the Extensions view)"
+    fi
+  done
+fi
+
+# ---------------------------------------------------------------------------
+if [ "$CONFIGURE_AGENTS" = 1 ]; then
+say "5. Agent CLIs"
+have claude && ok "claude $(claude --version 2>/dev/null | head -1)" \
+  || warn "claude CLI not found. Install it (see START-HERE.md), then run 'claude' once to sign in."
+have codex  && ok "codex $(codex --version 2>/dev/null | head -1)" \
+  || warn "codex CLI not found. Install it (see START-HERE.md), then run 'codex' once to sign in."
+
+# Codex defaults. Written only if the file is absent.
+if [ "$CHECK_ONLY" = 0 ] && [ ! -f "$HOME/.codex/config.toml" ]; then
+  if mkdir -p "$HOME/.codex" && cat > "$HOME/.codex/config.toml" <<'TOML'
+# Codex owns whole tasks here, same as Claude Code, so it can write.
+# approval_policy = "on-request" keeps commands asking before they run;
+# that is the brake, not a read-only sandbox.
+model_reasoning_effort = "high"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+# For a deliberate second-opinion pass, put read-only settings in
+# ~/.codex/review.config.toml and run Codex with that profile instead.
+
+[mcp_servers.context7]
+url = "https://mcp.context7.com/mcp"
+TOML
+  then ok "wrote ~/.codex/config.toml"
+  else bad "could not write ~/.codex/config.toml"; fi
+elif [ -f "$HOME/.codex/config.toml" ]; then
+  skip "$HOME/.codex/config.toml already exists, left alone"
+fi
+fi # Optional agent defaults
+
+# ---------------------------------------------------------------------------
+say "6. GitHub credentials and browser sign-in"
+if [ "$IS_WSL" = 0 ]; then
+  skip "browser bridge is WSL-only; native Linux opens sign-in pages with xdg-open"
+else
+  # WSL has no browser of its own, so 'gh auth login --web' appears to hang
+  # without the optional bridge that opens URLs in the Windows default browser.
+  PS_EXE="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+  if [ "$CHECK_ONLY" = 1 ] || [ "$INSTALL_BROWSER_BRIDGE" = 0 ]; then
+    if cmp -s "$SCRIPT_DIR/helpers/wslview.sh" /usr/local/bin/wslview && [ -x /usr/local/bin/wslview ]; then
+      ok "current browser bridge present"
+    else
+      warn "browser bridge absent, legacy, or custom; use --install-browser-bridge to install/upgrade the toolkit bridge"
+    fi
+  elif [ ! -x "$PS_EXE" ]; then
+    bad "powershell.exe not reachable from WSL; cannot install the browser bridge"
+  else
+    # shellcheck source=helpers/install-browser-bridge.sh
+    . "$SCRIPT_DIR/helpers/install-browser-bridge.sh"
+    if install_browser_bridge "$SCRIPT_DIR/helpers/wslview.sh" /usr/local/bin /etc/profile.d; then
+      export BROWSER=/usr/local/bin/wslview
+      ok "browser bridge installed and verified (new login shells also set BROWSER)"
+    else bad "browser bridge installation failed; existing custom handlers are preserved"; fi
+  fi
+fi
+
+# A PAT must never be written to ~/.bashrc. This script checks GitHub CLI
+# authentication but never reads the token. Codex receives it only from the
+# companion launcher. Claude's PAT-backed GitHub MCP is an explicit manual choice
+# because it stores an authorization header in Claude's user-scoped MCP config.
+GITHUB_AUTHENTICATED=0
+if have gh && gh_authenticated; then
+  GITHUB_AUTHENTICATED=1
+  ok "GitHub CLI is authenticated"
+elif have gh; then
+  if [ "$CHECK_ONLY" = 1 ]; then
+    warn "GitHub CLI is not authenticated"
+  else
+    warn "Run: gh auth login --hostname github.com --git-protocol https --web, then rerun this script"
+  fi
+else
+  warn "GitHub CLI is missing; GitHub access and the optional MCP helper are unavailable"
+fi
+
+if [ "$GITHUB_AUTHENTICATED" = 1 ]; then
+  # Without a credential helper, "git push" over HTTPS blocks on a username prompt
+  # that never renders. It looks like a network hang and is not one.
+  if git config --get-regexp 'credential\.https://github\.com\.helper' >/dev/null 2>&1; then
+    ok "git credential helper configured for github.com"
+  elif [ "$CHECK_ONLY" = 1 ]; then
+    warn "no git credential helper; git push will stall on a hidden prompt"
+  elif gh auth setup-git --hostname github.com >/dev/null 2>&1; then
+    ok "git credential helper configured via gh"
+  else
+    warn "gh auth setup-git failed; git push over HTTPS will stall"
+  fi
+
+  # Pushing a repository containing .github/workflows requires the "workflow" scope,
+  # which a default login does not request. The remote rejects the push with a
+  # message naming the scope rather than the fix.
+  if gh auth status --hostname github.com 2>&1 | grep -q "workflow"; then
+    ok "token has the workflow scope"
+  else
+    warn "token lacks the 'workflow' scope; pushing .github/workflows will be rejected"
+    warn "  fix: gh auth refresh --hostname github.com --scopes workflow"
+  fi
+fi
+
+if grep -q 'GITHUB_MCP_PAT' "$HOME/.bashrc" 2>/dev/null; then
+  warn "Legacy GITHUB_MCP_PAT entry detected in ~/.bashrc. Remove it after GitHub CLI authentication is working."
+fi
+
+# ---------------------------------------------------------------------------
+if [ "$CONFIGURE_AGENTS" = 1 ]; then
+say "7. MCP servers"
+
+# --- Claude Code -----------------------------------------------------------
+if ! have claude; then
+  skip "claude CLI not installed"
+elif [ "$CHECK_ONLY" = 1 ]; then
+  skip "not adding MCP servers"
+else
+  if claude mcp list 2>/dev/null | grep -q context7; then
+    ok "claude: context7 already configured"
+  else
+    claude mcp add --transport http --scope user context7 https://mcp.context7.com/mcp \
+      && ok "claude: context7 added" || bad "claude: could not add context7"
+  fi
+
+  if claude mcp list 2>/dev/null | grep -q github; then
+    ok "claude: github already configured"
+  else
+    skip "claude: github is optional and is not configured automatically; see docs/agents.md"
+  fi
+fi
+
+# --- Codex -----------------------------------------------------------------
+# context7 is written with the initial config above. The GitHub table contains no
+# credential, so it is appended after GitHub CLI authentication proves the helper
+# can obtain one when Codex starts.
+CODEX_CFG="$HOME/.codex/config.toml"
+if [ "$CHECK_ONLY" = 1 ]; then
+  skip "not editing $CODEX_CFG"
+elif [ ! -f "$CODEX_CFG" ]; then
+  skip "no ~/.codex/config.toml yet"
+elif grep -q '\[mcp_servers.github\]' "$CODEX_CFG"; then
+  ok "codex: github already in config.toml"
+elif [ "$GITHUB_AUTHENTICATED" = 1 ]; then
+  if cat >> "$CODEX_CFG" <<'TOML'
+
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+# Read from the process environment. Launch with helpers/codex-with-github-mcp.sh.
+bearer_token_env_var = "GITHUB_MCP_PAT"
+TOML
+  then ok "codex: github added to config.toml"
+  else bad "could not append GitHub configuration"; fi
+else
+  skip "codex: github needs an authenticated GitHub CLI session"
+fi
+
+# ---------------------------------------------------------------------------
+say "8. Claude Code user settings"
+# Global permissions must be project-agnostic. Repository settings, not this
+# file, decide whether builds, tests, or project scripts can run unattended.
+CC_SETTINGS="$HOME/.claude/settings.json"
+if [ "$CHECK_ONLY" = 1 ]; then
+  skip "not writing $CC_SETTINGS"
+elif [ -f "$CC_SETTINGS" ]; then
+  skip "$CC_SETTINGS already exists, left alone (see docs/agents.md for the block to merge)"
+else
+  if mkdir -p "$HOME/.claude" && cat > "$CC_SETTINGS" <<'JSON'
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [],
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/*.pfx)",
+      "Read(**/*.p12)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.ssh/**)"
+    ]
+  },
+  "autoMemoryEnabled": true
+}
+JSON
+  then ok "wrote $CC_SETTINGS"
+  else bad "could not write $CC_SETTINGS"; fi
+fi
+
+# ---------------------------------------------------------------------------
+fi # Optional agent configuration
+
+if [ "$DOCTOR" = 1 ]; then
+  say "9. Doctor: environment boundaries and usable configuration"
+  if [ "$IS_WSL" = 1 ]; then
+    ok "WSL kernel detected"
+    # Linux projects under /mnt/c are slow and lose Linux permissions.
+    if [ -d "$HOME/src" ]; then
+      SRC_REAL=$(cd -- "$HOME/src" && pwd -P)
+      case "$SRC_REAL" in
+        /mnt/*) warn "$HOME/src resolves to $SRC_REAL on the Windows filesystem; keep Linux projects on the Linux filesystem" ;;
+        *) ok "$HOME/src is on the Linux filesystem" ;;
+      esac
+    else
+      skip "$HOME/src does not exist yet; keep Linux projects there, not under /mnt/c"
+    fi
+  else
+    ok "native Linux kernel"
+  fi
+  if [ "$WANT_RUST" = 1 ] && have rustup; then
+    COMPONENTS=$(rustup component list --installed 2>/dev/null || true)
+    case "$COMPONENTS" in *rustfmt*clippy*|*clippy*rustfmt*) ok "rustfmt and clippy installed";; *) warn "rustfmt or clippy missing";; esac
+  fi
+  if [ "$WANT_RUST" = 1 ]; then
+    if have code && code --list-extensions 2>/dev/null | grep -qix 'rust-lang.rust-analyzer'; then ok "VS Code rust-analyzer installed"; else warn "VS Code rust-analyzer not detected"; fi
+  fi
+  if [ "$WANT_PYTHON" = 1 ]; then
+    if have uv; then ok "uv available"; else warn "uv not available"; fi
+  fi
+  if [ "$CONFIGURE_AGENTS" = 1 ]; then
+    [ -f "$HOME/.codex/config.toml" ] && ok "Codex user configuration exists" || warn "Codex user configuration missing"
+    [ -f "$HOME/.claude/settings.json" ] && ok "Claude user settings exist" || warn "Claude user settings missing"
+  fi
+  if have gh && gh_authenticated; then ok "GitHub CLI authentication works"; else warn "GitHub CLI authentication is unavailable"; fi
+  echo "  Doctor does not verify VS Code profile names or agent sign-in state; see doctor/README.md."
+fi
+
+# ---------------------------------------------------------------------------
+say "Summary"
+if [ "$FAIL" -eq 0 ]; then
+  echo "  No required failures. Review warnings and manual checks below."
+else
+  echo "  $FAIL problem(s) above need attention."
+fi
+echo "Next: START-HERE.md for readiness; docs/stacks/ for stacks; new-project.sh to start a project."
+exit "$FAIL"

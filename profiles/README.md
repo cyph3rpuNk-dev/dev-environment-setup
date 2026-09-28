@@ -1,26 +1,28 @@
-# Canonical VS Code profiles
+# VS Code profiles
 
-Create only the user profiles you need, then paste the matching template into the profile's
-user settings:
+Create only the user profiles you need, then paste the matching template into the
+profile's user settings (**Preferences: Open User Settings (JSON)**):
 
 | Profile | Use for | Settings template |
 |---|---|---|
-| `Rust · Windows` | Windows-native Rust work | `Rust-Windows.settings.jsonc` |
-| `Rust · WSL` | Linux/WSL Rust work | `Rust-WSL.settings.jsonc` |
-| `General · Windows` | Future Windows-native projects | `General-Windows.settings.jsonc` |
-| `General · WSL` | Future Linux, data, service, and command-line projects | `General-WSL.settings.jsonc` |
+| `General · Windows` | Windows-native projects | `General-Windows.settings.jsonc` |
+| `General · Linux` | Linux projects, on native Linux or in a Remote-WSL window | `General-Linux.settings.jsonc` |
+| `Rust · Windows` | Windows-native Rust | `Rust-Windows.settings.jsonc` |
+| `Rust · Linux` | Linux Rust, native or WSL | `Rust-Linux.settings.jsonc` |
 
-The general profiles are intentionally language-neutral. Add a language extension
-only after a project selects that language, and put shared project recommendations in
-the repository's `.vscode/extensions.json`.
+Earlier versions called the Linux profiles `General · WSL` and `Rust · WSL`; the
+settings are the same, so existing profiles need no change.
 
-Rust profiles use default Cargo features. Choose additional features in each
-repository; enabling every feature is not appropriate for all projects.
+The general profiles are intentionally language-neutral. Put a project's extension
+recommendations in its `.vscode/extensions.json`, and add a language extension to a
+profile only after a project selects that language. Rust profiles use default Cargo
+features; choose additional features per repository.
 
-Select `-Stack Rust` or `--stack=rust` explicitly for Rust tools. Editor profiles do not select a bootstrap stack. Run the corresponding bootstrap from a terminal in that profile's environment. VS
-Code installs extensions separately on Windows and Remote-WSL, so the same extension
-may need installing on both hosts.
+Editor profiles do not install anything. Select `-Stack`/`--stack` in the bootstrap
+for toolchains, and run the Linux bootstrap from a Remote-WSL window's terminal so
+extensions land on the WSL side: VS Code installs extensions separately for Windows
+and each WSL distribution.
 
-Export each completed profile and keep the export in a private backup. Do not commit
-profile exports. VS Code owns that format and may change it; the portable source of
-truth in this folder is the profile name plus its small settings template.
+Export each finished profile to a private backup. Do not commit exports: VS Code owns
+that format, and the portable source of truth here is the profile name plus its small
+settings template.

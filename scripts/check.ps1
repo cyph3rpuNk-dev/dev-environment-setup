@@ -20,7 +20,7 @@ try {
         "$env:ProgramFiles/Git/bin/bash.exe"
     } else { (Get-Command bash -ErrorAction Stop).Source }
     Step 'PowerShell syntax and profile JSON' {
-        $files = @(Get-ChildItem -Path *.ps1, helpers/*.ps1, scripts/*.ps1, tests/*.ps1)
+        $files = @(Get-ChildItem -Path *.ps1, helpers/*.ps1, scripts/*.ps1, tests/*.ps1, templates/foundation/*.ps1.template)
         foreach ($file in $files) {
             $tokens = $null; $parseErrors = $null
             $null = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$parseErrors)
@@ -36,6 +36,13 @@ try {
             & $bash -n $file.FullName.Replace('\', '/')
             if ($LASTEXITCODE -ne 0) { throw "Invalid Bash: $($file.Name)" }
         }
+    }
+    Step 'ShellCheck (when installed)' {
+        if (Get-Command shellcheck -ErrorAction SilentlyContinue) {
+            $scripts = @(Get-ChildItem *.sh, helpers/*.sh, tests/*.sh | ForEach-Object { $_.FullName })
+            & shellcheck -S warning -x @scripts
+        }
+        else { Write-Host 'skipped: shellcheck is not installed (CI runs it on Linux)' }
     }
     Step 'PowerShell regression tests' { & $shellExe -NoProfile -File tests/test-powershell.ps1 }
     Step 'Bash regression tests' { & $bash tests/test-bash.sh }

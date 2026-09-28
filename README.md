@@ -1,21 +1,97 @@
 # Development environment setup
 
-Project-neutral workstation setup for Windows and optional Fedora in WSL.
-Follow [START-HERE.md](START-HERE.md) for a new machine and
-[NEW-PROJECT.md](NEW-PROJECT.md) for a new repository.
+A workstation toolkit for starting and building software projects on **Windows**
+or **Linux**, with an optional **WSL** Linux environment for Windows users whose
+project targets Linux. Clone it onto the machine you use, run the bootstrap for
+that operating system, then create each new project with the scaffolder.
 
-The default bootstrap installs base tools and general editor extensions. Rust is
-opt-in with `-Stack Rust` or `--stack=rust`; agent configuration is opt-in with
-`-ConfigureAgents` or `--configure-agents`. Supply selections on each run,
-including check/doctor and reruns. Existing installations are never uninstalled.
-These defaults replace the earlier all-in-one setup.
+It does three things:
 
-- [Stack profiles](docs/stacks/README.md): optional runtimes and build tools.
-- [Editor profiles](profiles/README.md): portable settings, copied separately.
-- [Project guides](docs/projects/README.md): optional Nomad, Razer and NCAAM workflows.
+1. **Prepares the machine.** Git, GitHub CLI, VS Code extensions and, only when you
+   select them, language stacks (Rust, Python/uv), a WSL environment and AI coding
+   agent defaults. Check and doctor modes report without changing anything.
+2. **Helps you choose where a project lives.** A native Windows program belongs on
+   Windows. Anything that runs on or deploys to Linux (web servers, WordPress/PHP,
+   containers, Linux services) belongs on Linux, which on a Windows machine means WSL.
+3. **Starts new repositories from a reviewed foundation.** A project charter, shared
+   agent policy (`AGENTS.md`, `CLAUDE.md`), one local gate that CI also runs, and
+   sensible Git defaults. Undecided choices stay visible instead of being guessed.
 
-`dev-environment-setup.md` is retained as a dated project reference; its old
-bootstrap commands are superseded by the current onboarding guide.
+## Get the toolkit
+
+You need Git to clone. Keep the toolkit outside your project repositories.
+
+**Windows** (PowerShell, no administrator needed):
+
+```powershell
+winget install --id Git.Git -e          # skip if 'git --version' already works
+# open a new PowerShell window so git is on PATH, then:
+git clone https://github.com/cyph3rpuNk-dev/dev-environment-setup.git "$HOME\dev-environment-setup"
+cd "$HOME\dev-environment-setup"
+```
+
+**Linux** (Fedora/RHEL or Debian/Ubuntu):
+
+```bash
+sudo dnf install -y git        # Fedora/RHEL
+sudo apt-get install -y git    # Debian/Ubuntu
+git clone https://github.com/cyph3rpuNk-dev/dev-environment-setup.git ~/dev-environment-setup
+cd ~/dev-environment-setup
+```
+
+Without Git, use GitHub's **Code > Download ZIP** and extract it to the same place.
+If Windows reports a downloaded script as blocked, inspect it, then run
+`Unblock-File` on that file only.
+
+## Quick start
+
+Full, explained steps are in [START-HERE.md](START-HERE.md). The short version:
+
+| You are on | Run | Add a stack |
+|---|---|---|
+| Windows | `powershell -NoProfile -File .\bootstrap-windows.ps1 -Check`, then `-InstallMissing` | `-Stack Rust,Python` |
+| Linux | `bash bootstrap-linux.sh --check`, then `bash bootstrap-linux.sh` | `--stack=rust,python` |
+| Windows, Linux-targeted project | Windows steps with `-Wsl` added (Administrator PowerShell), then inside WSL the Linux steps | as above |
+
+Then start a project:
+
+```powershell
+powershell -NoProfile -File .\new-project.ps1        # Windows-native projects
+```
+
+```bash
+bash new-project.sh                                  # Linux or WSL projects
+```
+
+The scaffolder asks whether the project is a native Windows program and whether it
+targets Linux, recommends where it belongs and says why. If you run it on the wrong
+side, it creates nothing and prints the command for the right one.
+
+## What it never does
+
+- Uninstall software, overwrite existing agent or editor settings, or replace a custom
+  browser handler.
+- Store a GitHub token in a file, shell profile or persistent environment variable.
+- Install a WSL distribution for you, select the Visual Studio C++ workload, or decide
+  a project's licence, security rules or supported platforms.
+
+## Layout
+
+| Path | Purpose |
+|---|---|
+| [START-HERE.md](START-HERE.md) | Guided machine setup for Windows, Linux, and Windows + WSL |
+| [NEW-PROJECT.md](NEW-PROJECT.md) | Turning an idea into a repository; what the scaffolder creates and what you still decide |
+| `bootstrap-windows.ps1`, `bootstrap-linux.sh` | Rerunnable setup with `-Check`/`--check` and `-Doctor`/`--doctor` modes |
+| `bootstrap-wsl.sh` | Older name for `bootstrap-linux.sh`; still works |
+| `new-project.ps1`, `new-project.sh` | Project scaffolder |
+| [docs/stacks/](docs/stacks/README.md) | Optional Rust and Python stacks |
+| [docs/agents.md](docs/agents.md) | Claude Code and Codex: shared policy, enforcement, MCP, review habits |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Failures that actually happen and what they mean |
+| [profiles/](profiles/README.md) | VS Code settings templates |
+| [templates/](templates/README.md) | Repository foundation templates used by the scaffolder |
+| [doctor/](doctor/README.md) | What the automated checks can and cannot prove |
+| `helpers/` | Browser bridge for WSL sign-in; Codex launcher with a process-scoped GitHub token |
+| [examples/](examples/README.md) | Worked, dated examples from real projects; not part of setup |
 
 ## Maintaining this toolkit
 
@@ -30,37 +106,16 @@ pwsh -NoProfile -File scripts/check.ps1
 Use an absolute script path when outside this repository. The gate requires Git,
 PowerShell 5.1+ and Bash; it uses Git for Windows Bash when installed in its standard
 location. It checks PowerShell/Bash syntax, profile and embedded Claude JSON,
-credential lifetime, gate failures, browser input handling, linker-probe failures,
-and mocked first-run/rerun/doctor behavior. Tests use temporary fixtures and fake
-credentials. They do not install software or access real agent accounts.
+credential lifetime, gate and placeholder failures, browser input handling,
+linker-probe failures, WSL enablement decisions, the scaffolder, and mocked
+first-run/rerun/doctor behavior on Fedora, Debian/Ubuntu, native Linux and WSL
+fixtures. Tests use temporary fixtures and fake credentials. They do not install
+software or access real agent accounts.
 
 CI runs the same gate with Windows PowerShell 5.1, Windows PowerShell 7 and Linux
-PowerShell 7. These tests do not prove that winget, Fedora packages, WSL interoperability,
-or live authentication work on a fresh machine. Use the onboarding/doctor manual
-checks for those integration boundaries. TOML schema and live MCP connectivity are
-not validated by the offline gate.
+PowerShell 7, and runs the Bash tests inside Fedora and Debian containers. These tests
+do not prove that winget, distribution packages, WSL enablement or live authentication
+work on a fresh machine. Use the doctor and manual checks for those boundaries.
 
 The shared maintenance policy is [AGENTS.md](AGENTS.md). [CLAUDE.md](CLAUDE.md)
-imports that policy rather than keeping a second copy. These are agent instructions,
-not runtime dependencies or a security sandbox.
-The filenames and import convention follow the official
-[Codex instructions guide](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
-and [Claude memory documentation](https://code.claude.com/docs/en/memory).
-
-## Browser bridge
-
-The WSL bridge is opt-in:
-
-```bash
-bash bootstrap-wsl.sh --install-browser-bridge
-```
-
-It requires sudo and reachable Windows PowerShell. `--no-dnf` performs no sudo
-operations and cannot be combined with this option. `--check`/`--doctor` never install
-the bridge. Existing custom `wslview`, browser profile files and `xdg-open` handlers
-are preserved; the exact legacy bridge shipped here can be upgraded. Review any
-custom bridge manually if the installer refuses to replace it.
-
-After running the bootstrap, open a new login shell or run
-`export BROWSER=/usr/local/bin/wslview` in the calling shell before browser sign-in.
-The bridge supports absolute HTTP(S) URLs only.
+imports that policy rather than keeping a second copy.

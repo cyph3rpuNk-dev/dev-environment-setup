@@ -3,6 +3,12 @@
 # already used or deliberately approved by this repository's CI.
 set -uo pipefail
 # Copy this gate to scripts/check.sh. Each placeholder is one simple command.
+# Refuse to run until every placeholder is replaced, so an unfinished gate can
+# never report success.
+if grep -q '{{[A-Z_][A-Z_]*}}' "${BASH_SOURCE[0]}"; then
+  echo 'FAIL: replace the remaining {{...}} placeholders in this gate first.' >&2
+  exit 1
+fi
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." || exit 1
 
 failures=0

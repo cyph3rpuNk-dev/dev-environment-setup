@@ -1,34 +1,37 @@
-# Deterministic repository foundation
+# Repository foundation templates
 
-Use these templates before asking an agent to add project infrastructure. Copy the
-smallest applicable set, replace every `{{...}}` placeholder from verified facts or
-explicit human decisions, and run the repository gate.
+`new-project.ps1` and `new-project.sh` copy these into a new repository and replace
+only what they know: the project name, gate command, environment and its rationale,
+and (with an explicit stack choice) the gate's format, lint and test commands.
+Everything else stays a visible `{{...}}` placeholder for a human decision.
 
 Do not ask an agent to infer a runtime minimum, licence, data right, protected path,
 security invariant, destructive command, release process, or production credential.
 
-## New repository copy order
+| Template | Destination | Replace |
+|---|---|---|
+| `foundation/PROJECT-CHARTER.md.template` | `PROJECT-CHARTER.md` | every `{{...}}`; keep unknowns under Open decisions |
+| `foundation/AGENTS.md.template` | `AGENTS.md` | purpose, verified invariants, prohibitions, boundaries |
+| `foundation/CLAUDE.md.template` | `CLAUDE.md` (only if Claude Code is used) | nothing; add Claude-only notes below the import |
+| `foundation/check.sh.template` | `scripts/check.sh` (Linux/WSL) | `{{FORMAT_COMMAND}}`, `{{LINT_COMMAND}}`, `{{TEST_COMMAND}}` |
+| `foundation/check.ps1.template` | `scripts/check.ps1` (Windows) | the same three commands |
+| `foundation/README.md.template` | `README.md` | name, environment, gate command |
+| `foundation/gitattributes.template` | `.gitattributes` | nothing |
+| `foundation/gitignore.template` | `.gitignore` | add the stack's build output |
+| `foundation/editorconfig.template` | `.editorconfig` | nothing |
+| `rust/rust-toolchain.toml.template` | `rust-toolchain.toml` | channel or exact version from a documented policy |
 
-1. Copy `foundation/PROJECT-CHARTER.md.template` to `PROJECT-CHARTER.md`. Decide the
-   purpose, first milestone, environment, data handling, and open questions before
-   selecting a stack.
-2. Create the stack-owned manifest, lockfile, `.gitignore`, `.gitattributes`, and
-   README from the selected toolchain's current official guidance.
-3. Copy `foundation/AGENTS.md.template` to `AGENTS.md` and replace its placeholders.
-4. Copy `foundation/CLAUDE.md.template` to `CLAUDE.md` if Claude Code will be used.
-   Keep it tracked only when repository policy permits it.
-5. Copy one gate template to `scripts/check.ps1` or `scripts/check.sh`. These
-   templates resolve the repository root as the parent of `scripts/`. If the
-   repository uses another destination, adjust that root calculation. Replace
-   each command placeholder with one command; give separate commands separate
-   steps so a later success cannot hide an earlier failure. Run each command
-   independently, and use the completed gate in CI, VS Code and agent instructions.
-6. For Rust repositories, add `rust/rust-toolchain.toml.template` only after choosing
-   the channel or exact version from a documented compatibility policy.
-7. Add repository-specific hooks and rules only when a real invariant needs
-   enforcement. Repeat any critical prohibition in `AGENTS.md` so every agent sees it.
+The gate templates resolve the repository root as the parent of `scripts/`; adjust
+that if you put the gate elsewhere. Each placeholder is one command, so give separate
+commands separate steps and a later success cannot hide an earlier failure. Both gate
+templates refuse to run while any placeholder remains, so an unfinished gate can never
+report success. Run each command on its own first, then use the completed gate in CI,
+VS Code tasks and agent instructions.
 
-## Existing repository copy order
+Add repository-specific hooks and rules only when a real invariant needs enforcement,
+and repeat any critical prohibition in `AGENTS.md` so every agent sees it.
+
+## Existing repositories
 
 Do not overwrite established documentation or policy with a generic template.
 
@@ -39,7 +42,5 @@ Do not overwrite established documentation or policy with a generic template.
 4. Preserve accurate hand-written content verbatim when moving it.
 5. Work on a branch, run the current gate, review the diff, and use a pull request.
 
-The foundation templates contain no project-specific language or deployment policy.
-Use [NEW-PROJECT.md](../NEW-PROJECT.md) for the full new-project workflow and
-[optional project guides](../docs/projects/README.md) for dated project examples,
-subject to verification against their current repositories.
+See [NEW-PROJECT.md](../NEW-PROJECT.md) for the full new-project workflow and
+[examples/](../examples/README.md) for dated examples from real projects.

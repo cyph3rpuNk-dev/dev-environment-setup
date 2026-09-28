@@ -1,5 +1,8 @@
 # NCAAM project planning (optional)
 
+> **Worked example, not setup instructions.** Written against a dated snapshot; see
+> [examples/README.md](README.md) for how it maps to the current toolkit.
+
 This project has enough data and evaluation risk that its definitions should be settled before implementation.
 
 ## Recommended starting environment
@@ -12,7 +15,7 @@ Keep the repository under:
 ~/src/ncaam-team-total-projection
 ```
 
-Start with the `General · WSL` VS Code profile. Choose and install the Python or other data stack only after the charter decisions below are made.
+Start with the `General · Linux` VS Code profile. Choose and install the Python or other data stack only after the charter decisions below are made.
 
 ### If Python is selected
 

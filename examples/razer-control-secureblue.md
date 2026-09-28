@@ -1,6 +1,9 @@
 # razer-control-secureblue (optional)
 
-Select the [Rust stack](../stacks/rust.md) inside Fedora first. Confirm current project prerequisites before installing additional packages. The historical dependency set included `gtk4-devel libadwaita-devel dbus-devel systemd-devel jq ImageMagick xdotool`; these are deliberately excluded from the base and Rust bootstraps. Verify the Rust minimum against the current manifest (the historical guide required 1.85 for edition 2024).
+> **Worked example, not setup instructions.** Written against a dated snapshot; see
+> [examples/README.md](README.md) for how it maps to the current toolkit.
+
+Select the [Rust stack](../docs/stacks/rust.md) inside Fedora first. Confirm current project prerequisites before installing additional packages. The historical dependency set included `gtk4-devel libadwaita-devel dbus-devel systemd-devel jq ImageMagick xdotool`; these are deliberately excluded from the base and Rust bootstraps. Verify the Rust minimum against the current manifest (the historical guide required 1.85 for edition 2024).
 
 razer-control-secureblue is a Fedora/Linux repository. Keep its canonical checkout inside the WSL filesystem, not under `/mnt/c`.
 
@@ -45,7 +48,7 @@ Record pre-existing failures.
 git switch -c chore/dev-environment-foundation
 ```
 
-Open the repository from a Remote-WSL window using the `Rust · WSL` profile. Use this brief with one agent:
+Open the repository from a Remote-WSL window using the `Rust · Linux` profile. Use this brief with one agent:
 
 > Compare the current razer-control-secureblue branch with sections 3.4, 4.1, 4.2, 5.2, 5.5, 5.6, 5.7, and 7.2 of the supplied development-environment guide. Apply only foundation changes that remain valid against the current repository. Preserve the existing `CLAUDE.md` content verbatim when moving shared policy into `AGENTS.md`; do not summarize or regenerate it. Treat current code, tests, CI, and documentation as authoritative. Do not modify `src/`, `desktop/`, or `tray/`, except for a reviewed `rust-version` declaration if current compatibility proves it. Run `cargo deny check` before choosing licences. Do not run a real hardware backend or any command that can write to the embedded controller. Run the final repository gate, show the full diff, and stop without committing or pushing.
 

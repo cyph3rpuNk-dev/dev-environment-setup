@@ -1,0 +1,9 @@
+# Secrets and local environment. Commit a redacted .env.example instead.
+.env
+.env.*
+!.env.example
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.code-profile

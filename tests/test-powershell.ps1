@@ -31,6 +31,9 @@ try {
     $env:TEST_POWERSHELL = $shellExe
     & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1"
     Assert ($LASTEXITCODE -eq 1) 'Gate counts native failure without contaminating later cmdlets'
+    [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $template, $utf8)
+    $output = & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" | Out-String
+    Assert ($LASTEXITCODE -eq 1 -and $output -match 'placeholders') 'Unfilled PowerShell gate refuses to report success'
 
     # A clean checkout has no ordinary `git diff`, so exercise the real toolkit
     # gate in a committed fixture containing trailing whitespace.
@@ -44,7 +47,7 @@ try {
     }
     [IO.File]::WriteAllText("$whitespaceRoot/tests/test-powershell.ps1", "exit 0`n", $utf8)
     foreach ($file in @('bootstrap.sh', 'helpers/helper.sh', 'tests/test-bash.sh', 'templates/foundation/check.sh.template')) {
-        [IO.File]::WriteAllText((Join-Path $whitespaceRoot $file), "exit 0`n", $utf8)
+        [IO.File]::WriteAllText((Join-Path $whitespaceRoot $file), "#!/usr/bin/env bash`nexit 0`n", $utf8)
     }
     [IO.File]::WriteAllText("$whitespaceRoot/profiles/fixture.jsonc", "{}`n", $utf8)
     [IO.File]::WriteAllText("$whitespaceRoot/trailing.txt", "committed whitespace  `n", $utf8)
@@ -68,7 +71,7 @@ try {
     # Run the full Windows bootstrap in a child shell with every external tool
     # mocked and a disposable user profile. No real installation or auth occurs.
     $profileHarness = @'
-param([string]$Source, [string]$Fixture, [string]$SelectedStack, [switch]$Agents, [switch]$Inspect)
+param([string]$Source, [string]$Fixture, [string]$SelectedStack, [switch]$Agents, [switch]$Inspect, [switch]$UseWsl)
 $env:USERPROFILE = $Fixture
 $global:Events = New-Object 'System.Collections.Generic.List[string]'
 function Record([string]$Name, $Arguments) {
@@ -88,34 +91,71 @@ function cargo-audit {}
 function cargo-deny {}
 function bacon {}
 function typos {}
+function uv { Record 'uv' $args }
 function claude { Record 'claude' $args; 'context7 github' }
 function codex { Record 'codex' $args }
 function wsl { Record 'wsl' $args }
 function winget { throw 'Unexpected installer' }
-& $Source -Stack $SelectedStack -ConfigureAgents:$Agents -Check:$Inspect
+& $Source -Stack $SelectedStack -ConfigureAgents:$Agents -Check:$Inspect -Wsl:$UseWsl
 $result = $LASTEXITCODE
 [IO.File]::WriteAllLines((Join-Path $Fixture 'events.txt'), $global:Events)
 exit $result
 '@
     [IO.File]::WriteAllText("$testRoot/profiles.ps1", $profileHarness, $utf8)
-    foreach ($selection in @('Base', 'Rust')) {
-        $fixture = Join-Path $testRoot "profile-$selection"
+    # 'Rust,Python' is one string, exactly as 'powershell -File' passes it.
+    foreach ($selection in @('Base', 'Rust', 'Python', 'Rust,Python')) {
+        $fixture = Join-Path $testRoot ("profile-" + ($selection -replace ',', '-'))
         $null = New-Item -ItemType Directory -Path $fixture
         & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture $selection
         Assert ($LASTEXITCODE -eq 0) "Windows $selection profile provisions with mocks"
         $events = Get-Content -Raw "$fixture/events.txt"
         Assert (-not (Test-Path "$fixture/.codex") -and -not (Test-Path "$fixture/.claude")) 'Agent settings require explicit selection'
-        if ($selection -eq 'Base') {
-            Assert ($events -notmatch 'rustup|rustc|cargo|rust-analyzer|claude|codex') 'Windows base excludes Rust and agents'
+        if ($selection -match 'Rust') {
+            Assert ($events -match 'cargo build' -and $events -match 'rust-analyzer') "Windows $selection selection exercises linker and extensions"
         } else {
-            Assert ($events -match 'cargo build' -and $events -match 'rust-analyzer') 'Windows Rust selection exercises linker and extensions'
+            Assert ($events -notmatch 'rustup|rustc|cargo|rust-analyzer') "Windows $selection excludes Rust"
         }
+        if ($selection -match 'Python') {
+            Assert ($events -match 'ms-python.python' -and $events -match 'charliermarsh.ruff') "Windows $selection adds Python extensions"
+        } else {
+            Assert ($events -notmatch 'ms-python|ruff') "Windows $selection excludes Python"
+        }
+        Assert ($events -notmatch 'claude|codex|remote-wsl|wsl ') "Windows $selection excludes agents and WSL unless selected"
         & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture $selection -Agents -Inspect
         Assert ($LASTEXITCODE -eq 0) "Windows $selection check completes"
         $events = Get-Content -Raw "$fixture/events.txt"
         Assert ($events -notmatch 'cargo (init|build|install)|rustup component add|code --install|claude mcp add') 'Windows checks never provision selected features'
         Assert (-not (Test-Path "$fixture/.codex") -and -not (Test-Path "$fixture/.claude")) 'Windows checks do not create selected agent settings'
     }
+
+    $fixture = Join-Path $testRoot 'profile-invalid'
+    $null = New-Item -ItemType Directory -Path $fixture
+    & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Rust,Go'
+    Assert ($LASTEXITCODE -eq 1 -and -not (Get-Content -Raw "$fixture/events.txt")) 'Unknown stack fails before any work'
+
+    # Agent defaults: written once, without a byte-order mark, and never rewritten.
+    $fixture = Join-Path $testRoot 'profile-agents'
+    $null = New-Item -ItemType Directory -Path $fixture
+    & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -Agents
+    Assert ($LASTEXITCODE -eq 0) 'Windows agent configuration provisions with mocks'
+    $written = @("$fixture/.codex/config.toml", "$fixture/.claude/settings.json")
+    foreach ($file in $written) {
+        $bytes = [IO.File]::ReadAllBytes($file)
+        Assert (-not ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)) "$(Split-Path -Leaf $file) has no byte-order mark"
+    }
+    $null = Get-Content -Raw "$fixture/.claude/settings.json" | ConvertFrom-Json
+    $before = @($written | ForEach-Object { [IO.File]::ReadAllText($_) })
+    & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -Agents
+    $after = @($written | ForEach-Object { [IO.File]::ReadAllText($_) })
+    Assert ($before[0] -eq $after[0] -and $before[1] -eq $after[1]) 'Agent configuration is unchanged on rerun'
+    Assert (([regex]::Matches($after[0], '(?m)^\[mcp_servers\.github\]')).Count -eq 1) 'GitHub MCP table is not duplicated'
+
+    # -Wsl adds the Remote-WSL extension; check mode never enables WSL.
+    $fixture = Join-Path $testRoot 'profile-wsl'
+    $null = New-Item -ItemType Directory -Path $fixture
+    & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -UseWsl
+    $events = Get-Content -Raw "$fixture/events.txt"
+    Assert ($events -match 'remote-wsl' -and $events -notmatch 'wsl --install') 'WSL selection adds its extension and never enables WSL without -InstallMissing'
 
     # Helpers invoke these functions, so no real auth lookup or agent can run.
     function gh {
@@ -208,8 +248,87 @@ exit $result
     & ([scriptblock]::Create($mcpBlock.Extent.Text))
     Assert ($script:probeErrors -eq 1) 'Failed MCP install is recorded as failure'
 
+    # WSL enablement decisions, run from the real block with every command stubbed.
+    $wslBlock = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if ($Wsl) {') -and $node.Extent.Text -match 'Get-WslDistribution' }, $true)
+    Assert ($null -ne $wslBlock) 'WSL block located'
+    function Say { param($Message) }
+    function Ok { param($Message) }
+    function Warn { param($Message) }
+    function Bad { param($Message) $script:probeErrors++ }
+    function ConvertTo-WslPath { param($Path) '/mnt/c/toolkit' }
+    function wsl { $script:wslCalls += ($args -join ' '); $global:LASTEXITCODE = $script:wslExit }
+    # Distros present | Check | InstallMissing | Admin | wsl exit | virtualisation | have wsl | failures | install call
+    $cases = @(
+        @(@('Ubuntu-24.04'), $false, $true, $false, 0, 'Hypervisor', $true, 0, $false),
+        @(@(), $true, $false, $true, 0, 'Enabled', $true, 0, $false),
+        @(@(), $false, $false, $true, 0, 'Enabled', $true, 0, $false),
+        @(@(), $false, $true, $false, 0, 'Enabled', $true, 1, $false),
+        @(@(), $false, $true, $true, 0, 'Enabled', $true, 0, $true),
+        @(@(), $false, $true, $true, 5, 'Enabled', $true, 1, $true),
+        @(@('FedoraLinux-44'), $true, $false, $false, 0, 'Disabled', $true, 1, $false),
+        @(@(), $false, $true, $true, 0, 'Enabled', $false, 1, $false)
+    )
+    foreach ($case in $cases) {
+        $script:caseDistros = $case[0]; $Check = $case[1]; $InstallMissing = $case[2]
+        $script:caseAdmin = $case[3]; $script:wslExit = $case[4]; $script:caseVirt = $case[5]; $script:caseHaveWsl = $case[6]
+        function Get-WslDistribution { return $script:caseDistros }
+        function Test-Administrator { return $script:caseAdmin }
+        function Get-VirtualizationState { return $script:caseVirt }
+        function Have { param($Name) if ($Name -eq 'wsl') { return $script:caseHaveWsl } return $true }
+        $Wsl = $true; $script:probeErrors = 0; $script:wslCalls = @()
+        & ([scriptblock]::Create($wslBlock.Extent.Text))
+        $installed = @($script:wslCalls | Where-Object { $_ -eq '--install --no-distribution' }).Count -eq 1
+        Assert ($script:probeErrors -eq $case[7] -and $installed -eq $case[8]) ("WSL decision: distros=" + $case[0].Count + " check=" + $case[1] + " install=" + $case[2] + " admin=" + $case[3] + " exit=" + $case[4] + " virt=" + $case[5] + " wsl=" + $case[6])
+    }
+
+    # Distribution names are read from UTF-16 output; informational text is never a name.
+    $listAst = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-WslDistribution' }, $true)
+    . ([scriptblock]::Create($listAst.Extent.Text))
+    function Have { return $true }
+    function wsl { $global:LASTEXITCODE = $script:wslExit; $script:wslOutput }
+    $script:wslExit = 0
+    $script:wslOutput = @(("Ubuntu-24.04".ToCharArray() -join "`0"), 'FedoraLinux-44', 'Windows Subsystem for Linux has no installed distributions.')
+    $names = @(Get-WslDistribution)
+    Assert ($names.Count -eq 2 -and $names[0] -eq 'Ubuntu-24.04' -and $names[1] -eq 'FedoraLinux-44') 'WSL listing strips NULs and ignores messages'
+    $script:wslExit = 1
+    Assert (@(Get-WslDistribution).Count -eq 0) 'Failed WSL listing yields no distributions'
+    Remove-Item Function:\wsl, Function:\Have
+
+    # Scaffolder. Piped input keeps it non-interactive, so it can never wait for input.
+    $np = Join-Path $testRoot 'np'
+    '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name WinTool -Parent $np -Environment Windows -Stack Rust | Out-Null
+    Assert ($LASTEXITCODE -eq 0) 'Scaffolder creates a Windows project'
+    foreach ($file in @('README.md', 'PROJECT-CHARTER.md', 'AGENTS.md', 'CLAUDE.md', 'scripts/check.ps1', '.gitattributes', '.gitignore', '.editorconfig')) {
+        $path = Join-Path (Join-Path $np 'WinTool') $file
+        Assert (Test-Path -LiteralPath $path) "Scaffolder created $file"
+        $bytes = [IO.File]::ReadAllBytes($path)
+        Assert (-not ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF) -and ($bytes -notcontains 13)) "$file is LF without a byte-order mark"
+    }
+    $project = Join-Path $np 'WinTool'
+    Assert ((git -C $project symbolic-ref HEAD) -eq 'refs/heads/main') 'Scaffolded repository starts on main'
+    git -C $project rev-parse --verify -q HEAD 2>$null | Out-Null
+    Assert ($LASTEXITCODE -ne 0) 'Scaffolder does not commit'
+    $charter = Get-Content -Raw (Join-Path $project 'PROJECT-CHARTER.md')
+    Assert ($charter -match 'Canonical development environment: WINDOWS' -and $charter -match 'rationale: chosen explicitly' -and $charter -match '\{\{LICENCE_OR_UNDECIDED\}\}') 'Charter records environment and keeps undecided fields'
+    Assert ((Get-Content -Raw (Join-Path $project 'scripts/check.ps1')) -match 'cargo clippy' -and (Get-Content -Raw (Join-Path $project '.gitignore')) -match '/target/') 'Rust stack fills the gate and ignore file'
+
+    '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name Plain -Parent $np -WindowsNative no -LinuxTarget no -NoClaude | Out-Null
+    Assert ($LASTEXITCODE -eq 0 -and -not (Test-Path (Join-Path $np 'Plain/CLAUDE.md'))) 'No platform tie stays on Windows and -NoClaude is honoured'
+    $output = & $shellExe -NoProfile -File (Join-Path $np 'Plain/scripts/check.ps1') | Out-String
+    Assert ($LASTEXITCODE -eq 1 -and $output -match 'placeholders') 'Scaffolded gate without a stack refuses to run'
+
+    $output = '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name LinuxTool -Parent $np -WindowsNative no -LinuxTarget yes -Stack Python | Out-String
+    Assert ($LASTEXITCODE -eq 3 -and -not (Test-Path (Join-Path $np 'LinuxTool')) -and $output -match 'new-project.sh.*--stack python') 'Linux project is redirected to WSL without creating anything'
+    [IO.File]::WriteAllText((Join-Path $project 'sentinel'), 'keep', $utf8)
+    '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name WinTool -Parent $np -Environment Windows | Out-Null
+    Assert ($LASTEXITCODE -eq 1 -and [IO.File]::ReadAllText((Join-Path $project 'sentinel')) -eq 'keep') 'Scaffolder never touches an existing project'
+    '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name '..\escape' -Parent $np -Environment Windows | Out-Null
+    Assert ($LASTEXITCODE -eq 1 -and -not (Test-Path (Join-Path $testRoot 'escape'))) 'Scaffolder rejects unsafe names'
+    '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name Asks -Parent $np | Out-Null
+    Assert ($LASTEXITCODE -eq 1 -and -not (Test-Path (Join-Path $np 'Asks'))) 'Scaffolder never guesses missing answers'
+
     # Embedded Claude JSON must stay valid on both platforms.
-    foreach ($file in @('bootstrap-windows.ps1', 'bootstrap-wsl.sh')) {
+    foreach ($file in @('bootstrap-windows.ps1', 'bootstrap-linux.sh')) {
         $source = Get-Content -Raw -Encoding UTF8 "$root/$file"
         $json = [regex]::Match($source, '(?ms)^\{\r?\n\s*"\$schema".*?^\}').Value
         $null = $json | ConvertFrom-Json

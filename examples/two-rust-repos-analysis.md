@@ -1,5 +1,10 @@
 # Historical project reference: Nomad Launcher and razer-control-secureblue
 
+> **Worked example, not setup instructions.** This August 2026 analysis predates the
+> cross-platform toolkit. Its setup commands, `bootstrap-wsl.sh`, `START-HERE.md` step
+> numbers and Fedora-only assumptions are historical; use START-HERE.md and
+> [examples/README.md](README.md) for the current equivalents.
+
 This is a dated reference, not the default toolkit configuration. Follow
 `START-HERE.md` for current base setup and `docs/stacks/` for explicit stack
 selection. Project workflows are now under `docs/projects/`. Older bootstrap

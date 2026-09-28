@@ -1,72 +1,270 @@
 # Start here
 
-This toolkit prepares Windows and, optionally, Fedora in WSL for development. Start with the base environment, then select the stack each project needs. Keep the toolkit separate from project repositories.
+This guide takes a machine from nothing to ready for project work. Follow it top to
+bottom the first time. Each step says what to run, what a good result looks like, and
+what to do when it is not.
 
-## 1. Choose your build environment
+Pick your path:
 
-Use native Windows for Windows APIs and Windows-only dependencies. Add Fedora in WSL when Linux tools or deployment require it. Linux project checkouts belong inside the WSL filesystem, for example `~/src`; Windows checkouts can live in `C:\src`.
+| Your machine | Your project | Follow |
+|---|---|---|
+| Windows | Windows programs, or no Linux requirement | Part 1, then Part 3 |
+| Linux | anything | Part 2, then Part 3 |
+| Windows | runs on or deploys to Linux (web server, WordPress/PHP, containers, Linux tools) | Part 1, Part 2 inside WSL, then Part 3 |
 
-Finish Windows Update and any required restart first. Keep this setup folder at an accessible local path such as `C:\Dev-Setup`; substitute your actual path below.
+Not sure which kind of project you have? `new-project.ps1` and `new-project.sh` ask two
+questions and recommend one; [NEW-PROJECT.md](NEW-PROJECT.md) explains the reasoning.
+You can add WSL later; nothing in Part 1 depends on it.
 
-## 2. Check and prepare Windows
+## Before you begin
+
+You need:
+
+- An account on the machine. Windows needs administrator access only to enable WSL;
+  Linux needs `sudo` for system packages.
+- Internet access, a GitHub account, and (optionally) Claude and/or OpenAI accounts
+  for the coding agents.
+- The toolkit itself; see "Get the toolkit" in [README.md](README.md).
+
+Never paste an API key, password, signing key or personal access token into a
+repository, agent prompt, Markdown file, shell profile or committed configuration.
+
+Finish operating-system updates and any pending restart first. On Windows, if the
+device uses BitLocker, know where the recovery key is before enabling WSL.
+
+---
+
+# Part 1: Windows
+
+## Step 1: check what the machine already has
+
+Open a normal PowerShell window in the toolkit folder:
 
 ```powershell
-cd C:\Dev-Setup
+cd "$HOME\dev-environment-setup"
 powershell -NoProfile -File .\bootstrap-windows.ps1 -Check
+```
+
+Add `-Wsl` if you will need Linux, and `-Stack Rust` or `-Stack Python` (or
+`-Stack Rust,Python`) for the languages you already know you need. Check mode changes
+nothing. It prints the Windows build, memory and free disk space, then every tool as
+`ok`, `warn` or `FAIL`. Note what already exists: that is how you later tell a new
+failure from an old one.
+
+With `-Wsl`, `FAIL ... virtualisation is disabled` means WSL 2 cannot run until you
+enable Intel VT-x or AMD-V in the firmware (BIOS/UEFI) setup screen.
+
+## Step 2: install the base tools
+
+```powershell
 powershell -NoProfile -File .\bootstrap-windows.ps1 -InstallMissing
 ```
 
-Base tools are Git, GitHub CLI, VS Code and PowerShell 7, plus general editor extensions. GitHub authentication is optional. Open a new terminal after installation and rerun with the same options to pick up PATH changes. If a downloaded script is blocked, inspect it before using `Unblock-File` on that specific file.
+This installs VS Code, Git, GitHub CLI and PowerShell 7 with winget, plus general
+editor extensions. Close PowerShell and open a new window so the new programs are on
+`PATH`, then run the same command again: the second run finishes anything the first
+process could not see yet. Supply the same `-Stack`/`-Wsl` options on every run,
+including check and doctor; selections are not remembered.
 
-Rust, its compiler/linker checks and Cargo tools require explicit [Rust stack selection](docs/stacks/rust.md). Existing tools and settings are retained when switching profiles.
+### Rust on Windows
 
-## 3. Add Fedora in WSL if needed
-
-Check existing distributions with `wsl -l -v`, then prove the chosen distribution starts with `wsl -d <Fedora-name> -- true`. A registered distribution with a missing disk is not healthy; see Appendix B of `dev-environment-setup.md` before attempting recovery. Do not unregister it without understanding the data-loss consequences.
-
-For a new WSL installation, enable platform support using `wsl --install --no-distribution` from administrator PowerShell, restart when requested, then use `wsl --list --online` to obtain the Fedora distribution name. Install that exact name with `wsl --install <Fedora-name>`, complete Linux account creation, and verify version 2 and successful startup. Firmware virtualization must be enabled for WSL2.
-
-Inside Fedora:
-
-```bash
-cd /mnt/c/Dev-Setup
-bash bootstrap-wsl.sh --check
-bash bootstrap-wsl.sh
-bash bootstrap-wsl.sh --doctor
-```
-
-The Fedora base package set is curl, Git and GitHub CLI. VS Code must already be reachable through the Remote-WSL integration for extension installation. Use `--no-dnf` to skip privileged package installation; missing base packages still fail readiness checks.
-
-The optional browser bridge is installed with `--install-browser-bridge`. It requires sudo and reachable Windows PowerShell and cannot be combined with `--no-dnf`. It preserves custom handlers. After successful installation, open a new login shell or run `export BROWSER=/usr/local/bin/wslview` before browser sign-in. Check and doctor modes never install the bridge.
-
-## 4. Select editor settings and a stack
-
-Start with the appropriate General settings in [profiles/](profiles/README.md). Create only the editor profiles you use. For Rust, select the optional [Rust stack](docs/stacks/rust.md) and matching editor settings. Other languages follow the choices in the project charter.
-
-## 5. Optional accounts and agents
-
-Set your Git commit identity separately in each environment using `git config --global user.name` and `git config --global user.email` with your chosen values. Follow each repository’s line-ending policy.
-
-For GitHub access, run `gh auth login --hostname github.com --git-protocol https --web`, then `gh auth status --hostname github.com --active`. Fedora provisioning can set up the Git credential helper after successful authentication; rerun the bootstrap if needed. Do not paste tokens into files or prompts.
-
-Agent installation and sign-in are optional and separate on Windows and Fedora. Follow the agents’ official installation instructions. To opt into this toolkit’s existing agent defaults and MCP configuration, add `-ConfigureAgents` on Windows or `--configure-agents` on Fedora. This creates missing settings, configures Context7, and appends a missing Codex GitHub MCP table after GitHub CLI authentication. Existing settings are preserved; no language commands are automatically allowed in newly created Claude settings. Existing permissions are not rewritten.
-
-Use the corresponding launcher in `helpers/` only when you selected GitHub MCP. It obtains the credential for the agent process without persisting it. Review the scope of connected services before enabling them.
-
-## 6. Verify readiness
+With `-Stack Rust` the script also installs rustup, rustfmt, clippy and Cargo tools,
+then compiles a tiny throwaway crate to prove the MSVC linker works. If that probe
+fails:
 
 ```powershell
-powershell -NoProfile -File .\bootstrap-windows.ps1 -Doctor
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e
+```
+
+In the Visual Studio Installer select **Desktop development with C++**, finish, open
+a new PowerShell and rerun. Do not start Rust project work until the probe passes.
+Details: [docs/stacks/rust.md](docs/stacks/rust.md).
+
+## Step 3 (optional): add a Linux environment with WSL
+
+Do this when a project targets Linux. Open **PowerShell as Administrator**:
+
+```powershell
+cd "$HOME\dev-environment-setup"
+powershell -NoProfile -File .\bootstrap-windows.ps1 -Wsl -InstallMissing
+```
+
+The script enables the WSL platform (`wsl --install --no-distribution`) but does not
+choose a Linux distribution for you. Restart Windows if asked, then list and install
+one:
+
+```powershell
+wsl --list --online
+wsl --install <Name-from-the-list>
+```
+
+Ubuntu (for example `Ubuntu-24.04`) is the most widely documented choice; a
+`FedoraLinux-*` entry is equally supported by this toolkit. Replace the placeholder,
+angle brackets included. When the distribution opens, create a Linux username and
+password; the password is used by `sudo` and is separate from your Windows password.
+
+Prove it actually starts. A distribution that is merely listed can still be broken:
+
+```powershell
+wsl -l -v                       # the row should show version 2
+wsl -d <Name> -- true           # must return without an error
+powershell -NoProfile -File .\bootstrap-windows.ps1 -Wsl -Doctor
+```
+
+If the probe reports a failure to attach a disk (`ERROR_PATH_NOT_FOUND`), read
+"A registered WSL distribution will not start" in
+[docs/troubleshooting.md](docs/troubleshooting.md) before changing anything. Never
+unregister a distribution you have not confirmed is empty.
+
+Now continue with **Part 2 inside the WSL terminal**. The toolkit you cloned on
+Windows is visible there, so you do not need a second copy:
+
+```bash
+cd /mnt/c/Users/<you>/dev-environment-setup
+```
+
+Keep Linux **projects** on the Linux filesystem (for example `~/src`), never under
+`/mnt/c`: builds there are several times slower and lose Linux file permissions.
+Running the toolkit's scripts from `/mnt/c` is fine.
+
+---
+
+# Part 2: Linux (native or inside WSL)
+
+## Step 4: check, then install
+
+```bash
+bash bootstrap-linux.sh --check
+bash bootstrap-linux.sh
+```
+
+The script detects whether it is running natively or inside WSL, and uses `dnf`
+(Fedora/RHEL) or `apt` (Debian/Ubuntu). It installs curl, Git and GitHub CLI with
+`sudo`, plus general VS Code extensions. Add `--stack=rust`, `--stack=python` or
+`--stack=rust,python` as needed. Run it a second time; the second run should mostly
+report `ok`.
+
+- `--no-sudo` skips system packages and reports them as failures instead.
+- Other distributions are detected and checked by command name; install the reported
+  packages yourself.
+- If it warns that GitHub CLI is older than 2.40 (common on Ubuntu 22.04 and Debian 12),
+  install a current build from GitHub's official instructions it links to.
+
+**VS Code on Linux.** On native Linux install VS Code from
+<https://code.visualstudio.com/docs/setup/linux>. Inside WSL, use the Windows VS Code:
+run `code .` from the WSL terminal, which opens a Remote-WSL window. Extensions that
+run code must be installed on the WSL side, so rerun `bash bootstrap-linux.sh` from that
+window's integrated terminal.
+
+**WSL only: browser sign-in.** WSL has no browser of its own, so `gh auth login --web`
+appears to hang. Install the small bridge that opens sign-in pages in your Windows
+browser (it needs `sudo` and preserves any existing custom handler):
+
+```bash
+bash bootstrap-linux.sh --install-browser-bridge
+export BROWSER=/usr/local/bin/wslview      # or open a new login shell
+```
+
+---
+
+# Part 3: every machine
+
+Windows and each WSL distribution are separate environments. Do the steps below once
+per environment you use: identities, sign-ins, extensions and settings are not shared.
+
+## Step 5: set your Git identity
+
+```text
+git config --global user.name "<your-name>"
+git config --global user.email "<your-github-email>"
+git config --global init.defaultBranch main
+git config --global --list
+```
+
+Do not set a global line-ending rule from a generic tutorial. Each repository's
+`.gitattributes` decides, and projects from the scaffolder get one.
+
+## Step 6: sign in to GitHub
+
+```text
+gh auth login --hostname github.com --git-protocol https --web
+gh auth status --hostname github.com --active
+```
+
+Then rerun the bootstrap for this environment. On Linux it configures Git to use
+GitHub CLI's credentials; without that, `git push` over HTTPS waits on a username
+prompt that never appears, which looks like a network hang.
+
+If you will push repositories containing `.github/workflows`, add the scope a default
+login omits; otherwise GitHub rejects the push:
+
+```text
+gh auth refresh --hostname github.com --scopes workflow
+```
+
+## Step 7 (optional): install the coding agents
+
+Install each agent in every environment where you will use it. Commands below were
+checked against the official pages on 28 September 2026; if they differ now, follow
+the official page.
+
+| Agent | Windows PowerShell | Linux and WSL | Official page |
+|---|---|---|---|
+| Claude Code | `irm https://claude.ai/install.ps1 \| iex` | `curl -fsSL https://claude.ai/install.sh \| bash` | <https://code.claude.com/docs/en/setup> |
+| Codex CLI | `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"` | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` | <https://github.com/openai/codex> |
+
+Open a new terminal, confirm with `claude --version` / `claude doctor` and
+`codex --version`, then run `claude` and `codex` once each to sign in. Signing in on
+Windows does not sign in WSL. In VS Code, install **Claude Code** (publisher Anthropic)
+and **Codex** (publisher OpenAI); the extension does not put the CLI on `PATH`.
+
+To apply this toolkit's conservative agent defaults (Codex asks before running
+commands; Claude cannot read `.env`, key or SSH files; Context7 documentation server),
+rerun the bootstrap with `-ConfigureAgents` or `--configure-agents`. Existing settings
+files are never overwritten. [docs/agents.md](docs/agents.md) explains the choices,
+GitHub MCP, and how to keep one policy for both agents.
+
+## Step 8: editor profiles
+
+Create only the VS Code profiles you need and paste the matching settings template
+from [profiles/](profiles/README.md): `General · Windows`, `General · Linux` (for WSL
+windows and native Linux), and the Rust variants if you selected Rust.
+
+## Step 9: verify
+
+```powershell
+powershell -NoProfile -File .\bootstrap-windows.ps1 -Doctor      # plus the same -Stack/-Wsl/-ConfigureAgents
 ```
 
 ```bash
-bash bootstrap-wsl.sh --doctor
+bash bootstrap-linux.sh --doctor                                   # plus the same --stack/--configure-agents
 ```
 
-Include the same stack and agent options you selected during installation to check those features. Check/doctor modes do not provision tools or write configuration; Windows doctor may start a registered WSL distribution. Review warnings and [manual checks](doctor/README.md); exit zero is not a guarantee that every optional feature is ready.
+Doctor modes never install or write configuration; the Windows doctor may start your
+WSL distribution to prove it works. Exit code zero means no required failures, not
+that every optional feature is ready: read the warnings and the manual checks in
+[doctor/README.md](doctor/README.md).
 
-## 7. Begin project work
+## Ready checklist
 
-Use [NEW-PROJECT.md](NEW-PROJECT.md) for a new repository. Existing repository documentation and CI define that project’s setup. Optional [project guides](docs/projects/README.md) retain the Nomad, Razer and NCAAM material for users who need it.
+- Operating-system updates done, no pending restart.
+- Doctor reports no unexplained failures in each environment you use.
+- With Rust on Windows: the linker probe passed.
+- With WSL: `wsl -d <Name> -- true` succeeds, and Linux projects will live under `~/src`.
+- Git identity set and `gh auth status` succeeds wherever you will push.
+- Agents, if used, report a version and are signed in on each side.
+- No token, key or personal profile has been committed anywhere.
 
-For each change: inspect the working tree, create a branch, run the project gate, review the diff and use a pull request. Fix an existing baseline failure before adding new infrastructure.
+When a check fails, stop at that layer: fix the machine before the repository, and an
+existing project's failing baseline before adding new tooling.
+
+## Next: start or join a project
+
+- New project: `new-project.ps1` (Windows) or `new-project.sh` (Linux/WSL), then
+  [NEW-PROJECT.md](NEW-PROJECT.md).
+- Existing project: clone it on the side its README requires, run its own gate first,
+  and record pre-existing failures before changing anything.
+
+For every change: start from an updated `main`, one branch per coherent change, one
+agent per task and working tree, run the gate yourself, review the diff, and merge
+through a pull request. Never rely only on an agent's statement that tests passed.

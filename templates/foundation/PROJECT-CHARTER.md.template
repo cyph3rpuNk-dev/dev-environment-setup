@@ -35,7 +35,8 @@ Not in scope:
 
 ## Environment and stack decisions
 
-- Canonical development environment: {{WINDOWS | WSL | OTHER | UNDECIDED}}
+- Canonical development environment: {{WINDOWS | LINUX | WSL | UNDECIDED}}
+- Environment rationale: {{WHY_THIS_ENVIRONMENT}}
 - Supported runtime environments: {{SUPPORTED_ENVIRONMENTS}}
 - Language and version policy: {{LANGUAGE_AND_VERSION_POLICY}}
 - Package manager and lockfile: {{PACKAGE_MANAGER_AND_LOCKFILE}}

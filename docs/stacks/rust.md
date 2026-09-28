@@ -1,21 +1,38 @@
 # Optional Rust stack
 
-Select Rust explicitly on every invocation, including checks and reruns. Selection is not persisted. Running the base profile later does not uninstall existing tools.
-
 ```powershell
 powershell -NoProfile -File .\bootstrap-windows.ps1 -Stack Rust -Check
 powershell -NoProfile -File .\bootstrap-windows.ps1 -Stack Rust -InstallMissing
 powershell -NoProfile -File .\bootstrap-windows.ps1 -Stack Rust -Doctor
 ```
 
-Windows adds rustup, rustfmt/clippy, Cargo utilities, Rust editor extensions and a temporary linker probe during provisioning. The Visual Studio C++ workload remains a manual prerequisite if linking fails. Check mode does not compile a probe.
+Windows adds rustup (winget), rustfmt and clippy, Cargo utilities, Rust editor
+extensions, and a temporary linker probe during provisioning. The probe compiles a
+throwaway crate because a missing MSVC linker only shows up at link time, with an
+error that does not say "install Visual Studio". If it fails, install
+`Microsoft.VisualStudio.2022.BuildTools` with the **Desktop development with C++**
+workload; that large selection stays a manual, reviewed step. Check mode does not
+compile the probe.
 
 ```bash
-bash bootstrap-wsl.sh --stack=rust --check
-bash bootstrap-wsl.sh --stack=rust
-bash bootstrap-wsl.sh --stack=rust --doctor
+bash bootstrap-linux.sh --stack=rust --check
+bash bootstrap-linux.sh --stack=rust
+bash bootstrap-linux.sh --stack=rust --doctor
 ```
 
-Fedora adds gcc and pkg-config, rustup, rustfmt/clippy, Cargo utilities and Rust editor extensions. `--no-dnf` still prevents sudo; missing selected packages are reported as failures. GTK, device libraries and project-specific minimum Rust versions belong to project guides and manifests.
+Linux adds a C compiler and pkg-config (`gcc pkg-config` on Fedora,
+`build-essential pkg-config` on Debian/Ubuntu), rustup from <https://rustup.rs>, rustfmt
+and clippy, Cargo utilities and Rust editor extensions. The rustup installer is
+downloaded completely before it runs, and it adds `~/.cargo/bin` to your shell
+profile, so open a new terminal afterwards. `--no-sudo` still prevents package
+installation; missing selected packages are reported as failures.
 
-Both stacks offer nextest, audit, deny, bacon and typos; Fedora also includes cargo-machete. Projects decide which tools and policies their own gate requires. Choose the matching Rust editor settings from `profiles/`. Toolchain pins and minimum versions belong in each repository.
+Both platforms offer cargo-nextest, cargo-audit, cargo-deny, bacon and typos; Linux
+also includes cargo-machete. They are installed with `cargo-binstall` (prebuilt
+binaries) when possible and built from source otherwise.
+
+Projects decide which tools and policies their gate requires. Add
+`rust-toolchain.toml` (template in `templates/rust/`) only after choosing a channel or
+exact version from a documented compatibility policy, and use the matching Rust
+editor settings from `profiles/`. System libraries a particular project needs (GTK,
+udev and so on) belong in that project's README, not in this stack.

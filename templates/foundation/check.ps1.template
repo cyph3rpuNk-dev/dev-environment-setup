@@ -6,6 +6,12 @@ param()
 # Copy this gate to scripts/check.ps1. Each placeholder is one command;
 # split multiple native commands into separate Steps so none masks another.
 $ErrorActionPreference = 'Stop'
+# Refuse to run until every placeholder is replaced. An unreplaced step would
+# otherwise parse as an empty script block and report success.
+if ((Get-Content -Raw -LiteralPath $PSCommandPath) -match '\{\{[A-Z_]+\}\}') {
+    Write-Host 'FAIL: replace the remaining {{...}} placeholders in this gate first.'
+    exit 1
+}
 Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 $failures = 0
 function Step([string]$Name, [scriptblock]$Action) {

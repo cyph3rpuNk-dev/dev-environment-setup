@@ -4,6 +4,34 @@ Use this guide when a project does not exist yet. Its purpose is to turn an idea
 
 The development-environment folder remains outside the new repository. Copy only the templates that become part of the project’s reviewed foundation.
 
+## Fast path: the scaffolder
+
+`new-project.ps1` (Windows) and `new-project.sh` (Linux or WSL) perform sections 1, 2
+and the mechanical part of 5 below:
+
+```powershell
+powershell -NoProfile -File .\new-project.ps1 -Name my-tool
+```
+
+```bash
+bash new-project.sh --name my-tool
+```
+
+They ask whether the project is a native Windows program and whether it runs on or
+deploys to Linux, recommend an environment with the reason, and record both in the
+charter. In a new or empty directory they create `README.md`, `PROJECT-CHARTER.md`,
+`AGENTS.md`, `CLAUDE.md` (skip with `-NoClaude`/`--no-claude`), `scripts/check.*`,
+`.gitattributes`, `.gitignore` and `.editorconfig`, and initialize Git on `main`. They
+never commit and never overwrite. Run on the wrong side, they create nothing and print
+the command for the right one.
+
+`-Stack Rust|Python` / `--stack rust|python` fills the gate with that stack's usual
+format, lint and test commands. Choose it only when you have decided the stack; without
+it the gate keeps its placeholders and refuses to run until you replace them.
+
+Everything the scaffolder cannot know stays a visible `{{...}}` placeholder. The rest
+of this guide explains how to decide those answers.
+
 ## Rule zero: define the project before choosing a stack
 
 Create a short project charter first. Start from `templates/foundation/PROJECT-CHARTER.md.template` and answer these questions:
@@ -27,22 +55,26 @@ Use one primary environment per project.
 | Choose | When it is the better fit |
 |---|---|
 | Native Windows | The product calls Windows APIs, builds Windows executables, uses MSVC, signs PE files, automates Windows applications, or depends on Windows-only hardware or SDKs. |
-| Fedora in WSL | The product is a Linux service, command-line tool, web application, data pipeline, Python project, containerized workload, or will deploy to Linux. |
+| Linux (WSL on a Windows machine) | The product is a Linux service, web application or site (including WordPress and other PHP), containerized workload, Linux command-line tool, or will deploy to Linux. Data and Python projects usually fit here too because their tooling and deployment targets are Linux-first. |
 | Both, with one canonical side | The project has a real cross-platform requirement. Pick one canonical development side and make the other a CI or compatibility target. |
 
-Do not keep an active Linux checkout under `/mnt/c`. Store it under `~/src` inside WSL. Do not build a Windows-native project from WSL merely because WSL is available.
+On a Linux machine, "Linux" simply means the machine itself. On a Windows machine it
+means a WSL distribution (`bootstrap-windows.ps1 -Wsl`, see START-HERE.md Part 1,
+Step 3). Do not keep an active Linux checkout under `/mnt/c`; store it under `~/src`
+inside WSL. Do not build a Windows-native project from WSL merely because WSL is
+available.
 
 If the environment choice is still unclear, write a small proof-of-concept outside the final repository and decide after testing the uncertain dependency.
 
 ## 2. Name the project and create its directory
 
-Choose a short repository name containing lowercase letters, numbers, and hyphens. Avoid embedding a temporary implementation choice in the name unless that choice is part of the product.
+The scaffolder does this step for you. To do it by hand, choose a short repository name containing lowercase letters, numbers, and hyphens. Avoid embedding a temporary implementation choice in the name unless that choice is part of the product.
 
 On Windows:
 
 ```powershell
-New-Item -ItemType Directory -Force C:\src\<project-name> | Out-Null
-Set-Location C:\src\<project-name>
+New-Item -ItemType Directory -Force "$HOME\src\<project-name>" | Out-Null
+Set-Location "$HOME\src\<project-name>"
 git init -b main
 ```
 
@@ -95,7 +127,7 @@ Record:
 
 Commit the lockfile for applications and reproducible analysis projects unless the chosen ecosystem has a documented reason not to.
 
-Do not install every possible language globally on the new PC. Install a runtime when a real project selects it, then add its extension to the appropriate `General · Windows` or `General · WSL` VS Code profile.
+Do not install every possible language globally on the new PC. Install a runtime when a real project selects it: the toolkit's Rust and Python (uv) stacks are in [docs/stacks/](docs/stacks/README.md); for anything else follow the runtime's official guidance and add its extension to the project's `.vscode/extensions.json`.
 
 ## 5. Add the repository foundation
 
@@ -110,10 +142,10 @@ The normal starting set is:
 ├── LICENSE                 # only after the licence is decided
 ├── .gitignore
 ├── .gitattributes
-├── .editorconfig
 ├── .vscode/
 │   ├── extensions.json
 │   └── settings.json
+├── .editorconfig
 ├── scripts/
 │   └── check.*             # .ps1 on Windows or .sh on Linux
 ├── tests/
@@ -254,7 +286,7 @@ Review the result as if it came from another contributor. Agent-generated policy
 
 ---
 
-Optional project-specific planning examples are in [docs/projects/](docs/projects/README.md).
+Worked examples from real projects, including a data-project charter, are in [examples/](examples/README.md).
 
 # Reusable readiness checklist
 

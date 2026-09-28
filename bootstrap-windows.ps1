@@ -4,31 +4,46 @@
     Safe to run more than once. Only its own temporary linker probe is removed;
     project repositories are never modified.
 
-        pwsh -File .\bootstrap-windows.ps1              # base tools and general extensions
-        pwsh -File .\bootstrap-windows.ps1 -Check       # report only, change nothing
-        pwsh -File .\bootstrap-windows.ps1 -Doctor      # check machine, agents, and GitHub auth
-        pwsh -File .\bootstrap-windows.ps1 -InstallMissing
-                                                        # also winget-install VS Code,
-                                                        # Git, GitHub CLI, and pwsh; -Stack Rust adds rustup
+        powershell -NoProfile -File .\bootstrap-windows.ps1 -Check           # report only, change nothing
+        powershell -NoProfile -File .\bootstrap-windows.ps1 -InstallMissing  # winget-install missing tools
+        powershell -NoProfile -File .\bootstrap-windows.ps1 -Doctor          # check plus environment probes
 
-    The Visual Studio C++ workload remains a manual installation if the linker
-    probe fails, because selecting that large workload requires review.
+    Optional selections, supplied on every run including -Check and -Doctor:
+
+        -Stack Rust,Python   add language stacks (Base is always included)
+        -Wsl                 add a Linux environment through WSL; with -InstallMissing in an
+                             Administrator PowerShell it enables the WSL platform
+        -ConfigureAgents     create missing Claude Code and Codex defaults and MCP config
+
+    The Visual Studio C++ workload remains a manual installation if the Rust linker
+    probe fails, because selecting that large workload requires review. Choosing and
+    installing a WSL distribution also stays with you.
 #>
 
 [CmdletBinding()]
-# Optional selections apply to this invocation only, including Check and Doctor.
-# -Stack Rust adds Rust; -ConfigureAgents adds agent defaults and MCP.
 param(
     [switch]$Check,
     [switch]$InstallMissing,
     [switch]$Doctor,
-    [ValidateSet('Base', 'Rust')][string]$Stack = 'Base',
+    [string[]]$Stack = @('Base'),
+    [switch]$Wsl,
     [switch]$ConfigureAgents
 )
 
 $ErrorActionPreference = 'Continue'
 $script:Failures = 0
 if ($Doctor) { $Check = $true }
+# 'powershell -File' passes "-Stack Rust,Python" as one string, so split commas here
+# rather than relying on array binding. Validate before doing any work.
+$Stack = @($Stack | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+foreach ($selected in $Stack) {
+    if (@('Base', 'Rust', 'Python') -notcontains $selected) {
+        Write-Host "unknown stack: $selected (choose Base, Rust, Python)" -ForegroundColor Red
+        exit 1
+    }
+}
+$wantRust = $Stack -contains 'Rust'
+$wantPython = $Stack -contains 'Python'
 
 function Say  ($m) { Write-Host ""; Write-Host "== $m ==" -ForegroundColor White }
 function Ok   ($m) { Write-Host "  ok    $m" -ForegroundColor Green }
@@ -36,6 +51,64 @@ function Skip ($m) { Write-Host "  skip  $m" -ForegroundColor DarkGray }
 function Warn ($m) { Write-Host "  warn  $m" -ForegroundColor Yellow }
 function Bad  ($m) { Write-Host "  FAIL  $m" -ForegroundColor Red; $script:Failures++ }
 function Have ($c) { [bool](Get-Command $c -ErrorAction SilentlyContinue) }
+
+# Agents and Node-based tools reject a UTF-8 byte-order mark in JSON, and Windows
+# PowerShell 5.1 writes one for -Encoding UTF8. Write configuration without it.
+$script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+function Write-ConfigFile ([string]$Path, [string]$Text) { [IO.File]::WriteAllText($Path, $Text, $script:Utf8NoBom) }
+function Add-ConfigText ([string]$Path, [string]$Text) { [IO.File]::AppendAllText($Path, $Text, $script:Utf8NoBom) }
+
+function Test-Administrator {
+    if ($env:OS -ne 'Windows_NT') { return $false }
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    return (New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Registered WSL distribution names, default first. wsl.exe emits UTF-16, so strip
+# NULs. Only name-shaped lines count, so an informational message is never a name.
+function Get-WslDistribution {
+    if (-not (Have 'wsl')) { return @() }
+    $listing = ((wsl --list --quiet 2>$null | Out-String) -replace "`0", '')
+    if ($LASTEXITCODE -ne 0) { return @() }
+    return @($listing -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[A-Za-z0-9._-]+$' })
+}
+
+# 'Hypervisor' (already running), 'Enabled', 'Disabled' or 'Unknown'. Read-only.
+function Get-VirtualizationState {
+    if ($env:OS -ne 'Windows_NT') { return 'Unknown' }
+    try {
+        if ((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).HypervisorPresent) { return 'Hypervisor' }
+        $cpu = Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1
+        if ($cpu.VirtualizationFirmwareEnabled) { return 'Enabled' } else { return 'Disabled' }
+    }
+    catch { return 'Unknown' }
+}
+
+function ConvertTo-WslPath ([string]$WindowsPath) {
+    if ($WindowsPath -match '^([A-Za-z]):\\(.*)$') {
+        return '/mnt/' + $Matches[1].ToLowerInvariant() + '/' + ($Matches[2] -replace '\\', '/')
+    }
+    return $WindowsPath
+}
+
+# ---------------------------------------------------------------------------
+Say "0. Machine"
+if ($env:OS -eq 'Windows_NT') {
+    try {
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+        Ok ("Windows build " + $os.BuildNumber)
+        Ok ("RAM " + [math]::Round($cs.TotalPhysicalMemory / 1GB, 1) + " GB")
+        $systemDrive = $env:SystemDrive.TrimEnd(':')
+        $free = [math]::Round((Get-PSDrive $systemDrive -ErrorAction Stop).Free / 1GB, 1)
+        if ($free -lt 20) { Warn "only $free GB free on ${systemDrive}:; toolchains and WSL need more" }
+        else { Ok "$free GB free on ${systemDrive}:" }
+    }
+    catch { Warn "could not read machine details: $_" }
+}
+else { Warn "not running on Windows; machine details skipped. On Linux, use bootstrap-linux.sh." }
+
 # ---------------------------------------------------------------------------
 Say "1. Base tools"
 
@@ -46,8 +119,12 @@ $base = @(
     @{ Cmd = 'pwsh';   Winget = 'Microsoft.PowerShell';       What = 'PowerShell 7' }
 )
 
-if ($Stack -eq 'Rust') {
+if ($wantRust) {
     $base += @{ Cmd = 'rustup'; Winget = 'Rustlang.Rustup'; What = 'Rust toolchain installer' }
+}
+if ($wantPython) {
+    # uv manages Python versions, environments, dependencies and uv.lock per project.
+    $base += @{ Cmd = 'uv'; Winget = 'astral-sh.uv'; What = 'uv (Python projects)' }
 }
 
 foreach ($t in $base) {
@@ -71,7 +148,7 @@ foreach ($t in $base) {
 }
 
 # ---------------------------------------------------------------------------
-if ($Stack -eq 'Rust') {
+if ($wantRust) {
 Say "2. Rust toolchain and the MSVC linker"
 
 if (Have 'rustup') {
@@ -155,15 +232,14 @@ if (Have 'cargo') {
 }
 else { Bad "cargo not available; skipping cargo tools" }
 
-# ---------------------------------------------------------------------------
 } # Optional Rust stack
 
+# ---------------------------------------------------------------------------
 Say "4. VS Code extensions (Windows side)"
 
 $exts = @(
     'ms-vscode.powershell',
     'ms-vscode.hexeditor',
-    'ms-vscode-remote.remote-wsl',
     'usernamehw.errorlens',
     'github.vscode-github-actions',
     'github.vscode-pull-request-github',
@@ -174,7 +250,9 @@ $exts = @(
     'bierner.markdown-mermaid'
 )
 
-if ($Stack -eq 'Rust') { $exts += @('rust-lang.rust-analyzer', 'ms-vscode.cpptools', 'tamasfe.even-better-toml', 'fill-labs.dependi') }
+if ($Wsl) { $exts += 'ms-vscode-remote.remote-wsl' }
+if ($wantRust) { $exts += @('rust-lang.rust-analyzer', 'ms-vscode.cpptools', 'tamasfe.even-better-toml', 'fill-labs.dependi') }
+if ($wantPython) { $exts += @('ms-python.python', 'charliermarsh.ruff') }
 
 if (-not (Have 'code')) {
     Warn "'code' is not on PATH. Open VS Code, then run this script from its integrated terminal."
@@ -197,17 +275,59 @@ else {
 }
 
 # ---------------------------------------------------------------------------
-if ($ConfigureAgents) {
-Say "5. Agent CLIs"
+if ($Wsl) {
+Say "5. WSL (optional Linux environment)"
+# Use WSL when a project targets Linux: web servers, PHP/WordPress, containers,
+# Linux services or Linux-only tools. Windows-native projects do not need it.
 
-if (Have 'claude') { Ok "claude found" } else { Warn "claude CLI not found. Install it, then run 'claude' once to sign in." }
-if (Have 'codex')  { Ok "codex found" }  else { Warn "codex CLI not found. Install it, then run 'codex' once to sign in." }
+$virtualization = Get-VirtualizationState
+if ($virtualization -eq 'Disabled') {
+    Bad "CPU virtualisation is disabled in firmware. Enable Intel VT-x or AMD-V in the BIOS/UEFI setup; WSL 2 cannot start without it."
+}
+elseif ($virtualization -eq 'Unknown') { Warn "could not read the virtualisation state" }
+else { Ok "virtualisation available" }
+
+$wslDistros = @(Get-WslDistribution)
+$toolkitInWsl = ConvertTo-WslPath $PSScriptRoot
+if (-not (Have 'wsl')) {
+    Bad "wsl.exe not found. WSL needs Windows 10 version 2004 or later, or Windows 11."
+}
+elseif ($wslDistros.Count -gt 0) {
+    Ok ("registered distributions: " + ($wslDistros -join ', '))
+    Write-Host "  Inside the distribution:  cd '$toolkitInWsl' && bash bootstrap-linux.sh --check"
+}
+elseif ($Check -or -not $InstallMissing) {
+    Warn "no WSL distribution is registered. Enable WSL with: -Wsl -InstallMissing from an Administrator PowerShell"
+}
+elseif (-not (Test-Administrator)) {
+    Bad "enabling WSL needs an Administrator PowerShell. Open one and run:  wsl --install --no-distribution"
+}
+else {
+    # --no-distribution enables the platform without silently choosing Ubuntu.
+    wsl --install --no-distribution | Out-Host
+    if ($LASTEXITCODE -ne 0) { Bad "wsl --install --no-distribution failed (exit $LASTEXITCODE)" }
+    else {
+        Ok "WSL platform enabled"
+        Warn "restart Windows if asked, then choose a distribution:"
+        Warn "  wsl --list --online      then    wsl --install <Name>   (for example Ubuntu-24.04 or a FedoraLinux entry)"
+        Warn "  create the Linux user, then rerun this script with -Wsl -Doctor"
+    }
+}
+} # Optional WSL
+
+# ---------------------------------------------------------------------------
+if ($ConfigureAgents) {
+Say "6. Agent CLIs"
+
+if (Have 'claude') { Ok "claude found" } else { Warn "claude CLI not found. Install it (see START-HERE.md), then run 'claude' once to sign in." }
+if (Have 'codex')  { Ok "codex found" }  else { Warn "codex CLI not found. Install it (see START-HERE.md), then run 'codex' once to sign in." }
 
 $codexDir = Join-Path $env:USERPROFILE '.codex'
 $codexCfg = Join-Path $codexDir 'config.toml'
 if (-not $Check -and -not (Test-Path $codexCfg)) {
-    New-Item -ItemType Directory -Force -Path $codexDir -ErrorAction Stop | Out-Null
-    @'
+    try {
+        New-Item -ItemType Directory -Force -Path $codexDir -ErrorAction Stop | Out-Null
+        Write-ConfigFile $codexCfg @'
 # Codex owns whole tasks here, same as Claude Code, so it can write.
 # approval_policy = "on-request" keeps commands asking before they run;
 # that is the brake, not a read-only sandbox.
@@ -223,15 +343,17 @@ url = "https://mcp.context7.com/mcp"
 
 [windows]
 sandbox = "elevated"
-'@ | Set-Content -Path $codexCfg -Encoding UTF8 -ErrorAction Stop
-    Ok "wrote $codexCfg"
+'@
+        Ok "wrote $codexCfg"
+    }
+    catch { Bad "could not write ${codexCfg}: $_" }
 }
 elseif (Test-Path $codexCfg) {
     Skip "$codexCfg already exists, left alone"
 }
 
 # ---------------------------------------------------------------------------
-Say "6. GitHub credentials"
+Say "7. GitHub credentials"
 # Do not persist a PAT in the Windows environment or a shell profile. The script
 # checks GitHub CLI authentication but never reads the token. The optional Codex
 # helper obtains it only for the Codex child process. Claude's PAT-backed GitHub MCP
@@ -258,7 +380,7 @@ if ([Environment]::GetEnvironmentVariable('GITHUB_MCP_PAT', 'User')) {
 }
 
 # ---------------------------------------------------------------------------
-Say "7. MCP servers"
+Say "8. MCP servers"
 
 # --- Claude Code -----------------------------------------------------------
 if (-not (Have 'claude')) {
@@ -280,7 +402,7 @@ else {
     }
 
     if ($mcp -match 'github') { Ok "claude: github already configured" }
-    else { Skip "claude: github is optional and is not configured automatically; see START-HERE.md" }
+    else { Skip "claude: github is optional and is not configured automatically; see docs/agents.md" }
 }
 
 # --- Codex -----------------------------------------------------------------
@@ -294,21 +416,24 @@ elseif ((Get-Content $codexCfg -Raw) -match '\[mcp_servers\.github\]') {
     Ok "codex: github already in config.toml"
 }
 elseif ($githubAuthenticated) {
-    @'
+    try {
+        Add-ConfigText $codexCfg @'
 
 [mcp_servers.github]
 url = "https://api.githubcopilot.com/mcp/"
 # Read from the process environment. Launch Codex through helpers/codex-with-github-mcp.ps1.
 bearer_token_env_var = "GITHUB_MCP_PAT"
-'@ | Add-Content -Path $codexCfg -Encoding UTF8 -ErrorAction Stop
-    Ok "codex: github added to config.toml"
+'@
+        Ok "codex: github added to config.toml"
+    }
+    catch { Bad "could not append GitHub configuration: $_" }
 }
 else {
     Skip "codex: github needs an authenticated GitHub CLI session"
 }
 
 # ---------------------------------------------------------------------------
-Say "8. Claude Code user settings"
+Say "9. Claude Code user settings"
 # Global permissions must be project-agnostic. Repository settings, not this
 # file, decide whether builds, tests, or project scripts can run unattended.
 
@@ -318,11 +443,12 @@ if ($Check) {
     Skip "not writing $ccSettings"
 }
 elseif (Test-Path $ccSettings) {
-    Skip "$ccSettings already exists, left alone (see guide 5.3 for the block to merge)"
+    Skip "$ccSettings already exists, left alone (see docs/agents.md for the block to merge)"
 }
 else {
-    New-Item -ItemType Directory -Force -Path $ccDir -ErrorAction Stop | Out-Null
-    @'
+    try {
+        New-Item -ItemType Directory -Force -Path $ccDir -ErrorAction Stop | Out-Null
+        Write-ConfigFile $ccSettings @'
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
@@ -337,26 +463,30 @@ else {
   },
   "autoMemoryEnabled": true
 }
-'@ | Set-Content -Path $ccSettings -Encoding UTF8 -ErrorAction Stop
-    Ok "wrote $ccSettings"
+'@
+        Ok "wrote $ccSettings"
+    }
+    catch { Bad "could not write ${ccSettings}: $_" }
 }
 
 # ---------------------------------------------------------------------------
 } # Optional agent configuration
 
 if ($Doctor) {
-    Say "9. Doctor: environment boundaries and usable configuration"
+    Say "10. Doctor: environment boundaries and usable configuration"
     if ($env:OS -eq 'Windows_NT') { Ok "Windows host detected" } else { Bad "This script must run on Windows" }
-    if (Have 'wsl') {
-        # wsl.exe emits UTF-16, so strip NULs before matching. Matching '2' against the
-        # whole listing is not a check: it also matches a name like 'Ubuntu-22.04', and
-        # it never proves the distribution can start. Probe the default one instead.
-        $wslList = ((wsl --list --quiet 2>$null | Out-String) -replace "`0", '').Trim()
-        if ([string]::IsNullOrWhiteSpace($wslList)) {
+    if (-not $Wsl) {
+        Skip "WSL not selected; add -Wsl to check the Linux environment"
+    }
+    elseif (Have 'wsl') {
+        $wslList = @(Get-WslDistribution)
+        if ($wslList.Count -eq 0) {
             Warn "No WSL distribution is registered"
         }
         else {
-            $distro = ($wslList -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1).Trim()
+            # Matching '2' against the whole listing is not a check: it also matches a
+            # name like 'Ubuntu-22.04', and it never proves the distribution can start.
+            $distro = $wslList[0]
             $wslVerbose = ((wsl --list --verbose 2>$null | Out-String) -replace "`0", '')
             if ($wslVerbose -match ("(?m)^\s*\*?\s*" + [regex]::Escape($distro) + "\s+\S+\s+2\s*$")) {
                 Ok "WSL distribution '$distro' is version 2"
@@ -369,20 +499,23 @@ if ($Doctor) {
                 Ok "WSL distribution '$distro' starts successfully"
             }
             else {
-                Bad "WSL distribution '$distro' is registered but will not start. See 'A registered WSL distribution will not start' in dev-environment-setup.md Appendix B."
+                Bad "WSL distribution '$distro' is registered but will not start. See 'A registered WSL distribution will not start' in docs/troubleshooting.md."
             }
+        }
+        if (Have 'code') {
+            $installed = @(code --list-extensions 2>$null)
+            if ($installed -contains 'ms-vscode-remote.remote-wsl') { Ok "VS Code WSL extension installed" }
+            else { Warn "VS Code WSL extension missing" }
         }
     }
     else { Warn "WSL is unavailable" }
-    if ($Stack -eq 'Rust' -and (Have 'rustup')) {
+    if ($wantRust -and (Have 'rustup')) {
         $components = (rustup component list --installed 2>$null | Out-String)
         if ($components -match 'rustfmt' -and $components -match 'clippy') { Ok "rustfmt and clippy installed" }
         else { Warn "rustfmt or clippy missing" }
     }
-    if (Have 'code') {
-        $installed = @(code --list-extensions 2>$null)
-        if ($installed -contains 'ms-vscode-remote.remote-wsl') { Ok "VS Code Remote - WSL extension installed" }
-        else { Warn "VS Code Remote - WSL extension missing" }
+    if ($wantPython) {
+        if (Have 'uv') { Ok "uv available" } else { Warn "uv not available" }
     }
     if ($ConfigureAgents) {
     if (Test-Path $codexCfg) { Ok "Codex user configuration exists" } else { Warn "Codex user configuration missing" }
@@ -396,6 +529,6 @@ Say "Summary"
 if ($script:Failures -eq 0) { Write-Host "  No required failures. Review warnings and manual checks below." }
 else { Write-Host "  $($script:Failures) problem(s) above need attention." -ForegroundColor Red }
 
-Write-Host 'Next: START-HERE.md for base readiness; docs/stacks/ for optional stacks; docs/projects/ for project guides.'
+Write-Host 'Next: START-HERE.md for readiness; docs/stacks/ for stacks; new-project.ps1 to start a project.'
 
 exit $script:Failures

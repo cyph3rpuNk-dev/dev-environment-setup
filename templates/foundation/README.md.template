@@ -1,0 +1,11 @@
+# {{PROJECT_NAME}}
+
+Status: idea. `PROJECT-CHARTER.md` records the purpose, scope and open decisions.
+Do not describe features here until they exist.
+
+## Development
+
+- Environment: {{ENVIRONMENT}}
+- Local gate: `{{GATE_COMMAND}}` (CI runs the same gate)
+
+Agent instructions live in `AGENTS.md`.

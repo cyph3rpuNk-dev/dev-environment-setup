@@ -1,4 +1,4 @@
-// Create a VS Code profile named "Rust · WSL", then copy these user settings.
+// Create a VS Code profile named "Rust · Linux" (native Linux or Remote-WSL), then copy these user settings.
 // Select Cargo features in each repository according to its own build policy.
 {
   "rust-analyzer.check.command": "clippy",

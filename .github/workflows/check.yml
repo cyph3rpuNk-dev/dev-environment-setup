@@ -30,3 +30,33 @@ jobs:
         if: matrix.shell == 'pwsh'
         shell: pwsh
         run: ./scripts/check.ps1
+
+  # The Linux bootstrap and scaffolder must work on each supported package family,
+  # not only on the Ubuntu runner image. Everything external remains mocked.
+  linux-distributions:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: fedora:latest
+            prepare: dnf install -y git-core diffutils gawk grep sed findutils coreutils ShellCheck
+          - image: debian:stable
+            prepare: apt-get update && apt-get install -y --no-install-recommends git ca-certificates shellcheck
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    timeout-minutes: 10
+    steps:
+      - name: Install test prerequisites
+        run: ${{ matrix.prepare }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Bash syntax
+        shell: bash
+        run: for f in *.sh helpers/*.sh tests/*.sh; do bash -n "$f"; done
+      - name: ShellCheck
+        shell: bash
+        run: shellcheck -S warning -x *.sh helpers/*.sh tests/*.sh
+      - name: Bash regression tests
+        shell: bash
+        run: bash tests/test-bash.sh
