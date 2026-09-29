@@ -47,20 +47,29 @@ than improvising.
    and never suggest deleting lock files, disabling checks or skipping the failed step.
 5. **Ask before acting.** In an agent, ask before every command that installs, changes
    settings, needs administrator or `sudo` rights, or touches GitHub. Say why it needs
-   those rights.
+   those rights. If the user says you need not ask, you may run read-only checks and
+   routine steps without asking, then report what you did. Still ask first before
+   anything that needs their password or a sign-in; creating, changing or pushing to
+   anything on GitHub; deleting, moving or overwriting their files; each commit; and
+   every decision this guide leaves to them.
 6. **Never handle secrets.** Never ask for or accept passwords, tokens, API keys or
    recovery codes. Sign-ins happen in the browser windows the tools open. If the user
    pastes a secret, tell them to revoke or change it.
 7. **Never decide for them.** Do not choose a licence, security rules, what data the
-   project may collect, a paid service, or whether the project is public. Explain the
-   options and let them choose; unknown answers stay as open decisions in the charter.
+   project may collect, a paid service, whether the project is public, or whether their
+   commits credit an AI assistant. Explain the options and let them choose; unknown
+   answers stay as open decisions in the charter.
 8. **Be honest about limits.** If the toolkit does not automate something (for example
    a language other than Rust or Python), say so and use the official documentation for
    it rather than inventing commands.
 
 **Chat or agent?** If you cannot run commands, you are in chat mode: give exactly one
 command, say which window to paste it in, and wait for the output. If you can run
-commands, still show each command and ask before running it.
+commands, still show each command and ask before running it. Your terminal cannot answer
+password prompts, browser sign-ins or Administrator prompts, so give those commands to
+the user to run in their own terminal: the install runs that use `sudo`, `gh auth login`,
+creating the WSL user, and anything that needs an Administrator PowerShell. Then check
+the result yourself. Never ask for a password so you can type it for them.
 
 ## Step 1: Where the user is starting from
 
@@ -268,8 +277,14 @@ decisions". Do the same for the placeholders in `AGENTS.md`.
   step deleted fails.
 
 Then run the gate (`./scripts/check.sh` or
-`powershell -NoProfile -File scripts/check.ps1`), review `git status`, make the first
-commit, and create a **private** GitHub repository:
+`powershell -NoProfile -File scripts/check.ps1`) and show the user which files the first
+commit will contain (`git status --short --untracked-files=all`). **In an agent**, also
+tell them before the first commit that coding agents may add a line to the commit
+message crediting the AI (for example `Co-Authored-By:` naming the model), and ask
+whether they want it; if not, "Commit and pull request attribution" in
+`docs/agents.md` shows how to turn it off. Commit only after they agree, show them the
+message afterwards (`git log -1 --format=%B`), and do the same before every later commit
+and push. Then create a **private** GitHub repository:
 
 ```text
 gh repo create <name> --private --source . --remote origin --push

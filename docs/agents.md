@@ -59,6 +59,29 @@ effects. If your settings file already exists, merge this block by hand:
 }
 ```
 
+**Commit and pull request attribution.** By default Claude Code adds a
+`Co-Authored-By:` line naming the model to the commits it creates, and a note to pull
+request descriptions. Commits and pull requests made from claude.ai web or Remote Control
+sessions also get a `Claude-Session:` link. GitHub shows a co-author on the commit, and
+the account can appear among the repository's contributors. The toolkit leaves this
+alone, because whether an AI is credited is your decision. To turn it off, add this to
+`~/.claude/settings.json` (all your projects) or to a repository's
+`.claude/settings.json` (that repository, for everyone who opens it), merging it into the
+file if one exists:
+
+```json
+{
+  "attribution": { "commit": "", "pr": "", "sessionUrl": false }
+}
+```
+
+An empty string hides that attribution, and `"sessionUrl": false` omits the session
+link. Use this object form: older versions reject `"attribution": false`, and the older
+`includeCoAuthoredBy` setting is deprecated. It affects new commits only; existing
+history keeps its lines unless you rewrite it. After the agent's next commit, confirm
+with `git log -1 --format=%B`. This toolkit has not verified whether Codex adds similar
+lines, so read the message of any commit it makes before you push.
+
 In the VS Code extension's user settings, starting in plan mode
 (`claudeCode.initialPermissionMode: "plan"`) is worth it for repositories where a wrong
 edit is a security regression.
