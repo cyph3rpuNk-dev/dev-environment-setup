@@ -122,7 +122,9 @@ if [ "$IS_WSL" = 1 ]; then
     [ -n "$existing" ] || existing=/
   done
   case "$missing/" in */../*) die "use a --parent path without '..' in the part that does not exist yet" ;; esac
-  resolved="$(cd -P -- "$existing" && pwd -P)$missing" || die "cannot resolve $PARENT"
+  base=$(cd -P -- "$existing" && pwd -P) || die "cannot resolve $PARENT"
+  # When nothing below / exists (no /mnt at all), base is "/"; avoid joining to "//mnt".
+  resolved="${base%/}$missing"
   case "$resolved/" in
     /mnt/*) die "$PARENT is on the Windows filesystem ($resolved). Linux projects belong on the Linux filesystem, for example ~/src" ;;
   esac
