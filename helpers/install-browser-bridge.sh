@@ -32,7 +32,8 @@ LEGACY
   fi
   if [ ! -e "$profile" ]; then
     printf '%s\n' "$profile_line" | sudo tee "$profile" >/dev/null || return 1
-    sudo chmod 0644 -- "$profile" || return 1
+    # No "--" here: BSD chmod reads the mode as its first operand and would treat "--" as a file.
+    sudo chmod 0644 "$profile" || return 1
   fi
   # Preserve existing handlers, including dangling symlinks.
   if [ ! -e "$bin_dir/xdg-open" ] && [ ! -L "$bin_dir/xdg-open" ]; then

@@ -63,6 +63,9 @@ jobs:
       - name: Bash regression tests
         shell: bash
         run: bash tests/test-bash.sh
+      - name: Bash regression tests with BSD-style option parsing (as on macOS)
+        shell: bash
+        run: POSIXLY_CORRECT=1 bash tests/test-bash.sh
 
   # Every commit must be authored by the maintainer, with no co-author, session-link
   # or bot credit. Full history is checked so nothing can slip in unnoticed.

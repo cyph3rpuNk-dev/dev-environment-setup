@@ -298,7 +298,7 @@ grep -q 'Environment rationale: it runs on or deploys to Linux' "$NP/demo/PROJEC
 grep -q '{{LICENCE_OR_UNDECIDED}}' "$NP/demo/PROJECT-CHARTER.md" || fail 'undecided charter fields were filled in'
 grep -q 'uv run ruff check' "$NP/demo/scripts/check.sh" && grep -qx '.venv/' "$NP/demo/.gitignore" || fail 'Python stack not applied'
 if grep -q '{{[A-Z_][A-Z_]*}}' "$NP/demo/scripts/check.sh"; then fail 'stack gate kept placeholders'; fi
-if grep -rl $'\r' "$NP/demo" --exclude-dir=.git | grep -q .; then fail 'scaffolder wrote CRLF'; fi
+if grep -rl --exclude-dir=.git $'\r' "$NP/demo" | grep -q .; then fail 'scaffolder wrote CRLF'; fi
 pass 'Scaffolder creates an uncommitted Linux repository and records the environment and reason'
 new_project --name plain --parent "$NP" --environment linux --no-claude > /dev/null
 [ ! -e "$NP/plain/CLAUDE.md" ] || fail '--no-claude ignored'
