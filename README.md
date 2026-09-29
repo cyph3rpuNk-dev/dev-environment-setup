@@ -116,6 +116,11 @@ PowerShell 7, and runs the Bash tests inside Fedora and Debian containers. These
 do not prove that winget, distribution packages, WSL enablement or live authentication
 work on a fresh machine. Use the doctor and manual checks for those boundaries.
 
+CI also checks that every commit is authored by the maintainer and carries no
+co-author, session-link or bot credit (`scripts/check-commit-identity.sh`), and
+`.claude/settings.json` switches off Claude Code's commit and pull request
+attribution in this repository.
+
 The shared maintenance policy is [AGENTS.md](AGENTS.md). [CLAUDE.md](CLAUDE.md)
 imports that policy rather than keeping a second copy.
 

@@ -53,10 +53,26 @@ jobs:
           persist-credentials: false
       - name: Bash syntax
         shell: bash
-        run: for f in *.sh helpers/*.sh tests/*.sh; do bash -n "$f"; done
+        run: for f in *.sh helpers/*.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
       - name: ShellCheck
         shell: bash
-        run: shellcheck -S warning -x *.sh helpers/*.sh tests/*.sh
+        run: shellcheck -S warning -x *.sh helpers/*.sh scripts/*.sh tests/*.sh
       - name: Bash regression tests
         shell: bash
         run: bash tests/test-bash.sh
+
+  # Every commit must be authored by the maintainer, with no co-author, session-link
+  # or bot credit. Full history is checked so nothing can slip in unnoticed.
+  commit-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Commits credit only the maintainer
+        env:
+          ALLOWED_EMAILS: 261779228+cyph3rpuNk-dev@users.noreply.github.com
+        run: bash scripts/check-commit-identity.sh HEAD

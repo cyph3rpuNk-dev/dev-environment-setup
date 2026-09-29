@@ -32,14 +32,14 @@ try {
         }
     }
     Step 'Bash syntax' {
-        foreach ($file in @(Get-ChildItem *.sh, helpers/*.sh, tests/*.sh, templates/foundation/*.sh.template)) {
+        foreach ($file in @(Get-ChildItem *.sh, helpers/*.sh, scripts/*.sh, tests/*.sh, templates/foundation/*.sh.template)) {
             & $bash -n $file.FullName.Replace('\', '/')
             if ($LASTEXITCODE -ne 0) { throw "Invalid Bash: $($file.Name)" }
         }
     }
     Step 'ShellCheck (when installed)' {
         if (Get-Command shellcheck -ErrorAction SilentlyContinue) {
-            $scripts = @(Get-ChildItem *.sh, helpers/*.sh, tests/*.sh | ForEach-Object { $_.FullName })
+            $scripts = @(Get-ChildItem *.sh, helpers/*.sh, scripts/*.sh, tests/*.sh | ForEach-Object { $_.FullName })
             & shellcheck -S warning -x @scripts
         }
         else { Write-Host 'skipped: shellcheck is not installed (CI runs it on Linux)' }

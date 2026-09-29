@@ -254,4 +254,42 @@ result=0; new_project --name asks --parent "$NP" > /dev/null 2>&1 || result=$?
 result=0; NP_KERNEL=wsl new_project --name onwindows --parent /mnt/c/src --environment linux > /dev/null 2>&1 || result=$?
 [ "$result" -eq 1 ] || fail 'WSL project accepted on the Windows filesystem'
 pass 'Scaffolder refuses the wrong platform, existing projects, unsafe names, guesses and /mnt in WSL'
+
+# Commit identity check: real Git in a temporary repository, identities set per commit.
+OWNER=owner@users.noreply.github.com
+ID="$TEST_ROOT/identity"
+git init -q -b main "$ID"
+commit_as() { # commit_as NAME EMAIL COMMITTER_EMAIL MESSAGE
+  env GIT_AUTHOR_NAME="$1" GIT_AUTHOR_EMAIL="$2" GIT_COMMITTER_NAME=committer \
+    GIT_COMMITTER_EMAIL="$3" git -C "$ID" -c commit.gpgsign=false commit -q --allow-empty -m "$4"
+}
+# The check reads the repository in its working directory.
+check_identity() { (cd "$ID" && env ALLOWED_EMAILS="$OWNER" bash "$ROOT/scripts/check-commit-identity.sh" "$1") > "$TEST_ROOT/identity.log" 2>&1; }
+commit_as owner "$OWNER" "$OWNER" 'feat: owner commit'
+commit_as owner "$OWNER" noreply@github.com 'Merge pull request #1 from owner/topic'
+check_identity main || fail 'owner commits and a website merge were rejected'
+grep -q '^ok: 2 commit' "$TEST_ROOT/identity.log" || fail 'identity check did not report the commits it checked'
+pass 'Identity check accepts the owner and GitHub website merges'
+bad_case() { # bad_case BRANCH EXPECTED_OUTPUT NAME EMAIL COMMITTER_EMAIL MESSAGE
+  local branch="$1" expected="$2"; shift 2
+  git -C "$ID" switch -q -c "$branch" main
+  commit_as "$@"
+  if check_identity "$branch"; then fail "identity check accepted $branch"; fi
+  grep -q "$expected" "$TEST_ROOT/identity.log" || fail "identity check did not explain $branch"
+}
+bad_case claude-author 'author Claude <noreply@anthropic.com>' Claude noreply@anthropic.com "$OWNER" 'chore: work'
+bad_case bot-author 'author dependabot' 'dependabot[bot]' 49699333+dependabot[bot]@users.noreply.github.com "$OWNER" 'chore: bump'
+bad_case other-committer 'committer committer <someone@example.com>' owner "$OWNER" someone@example.com 'chore: work'
+bad_case co-author 'co-author or attribution line' owner "$OWNER" "$OWNER" $'fix: work\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>'
+bad_case lowercase-co-author 'co-author or attribution line' owner "$OWNER" "$OWNER" $'fix: work\n\nco-authored-by: Someone <s@example.com>'
+bad_case session-link 'co-author or attribution line' owner "$OWNER" "$OWNER" $'fix: work\n\nClaude-Session: https://claude.ai/code/session_x'
+bad_case generated-line 'co-author or attribution line' owner "$OWNER" "$OWNER" $'fix: work\n\nGenerated with [Claude Code](https://claude.com/claude-code)'
+pass 'Identity check rejects Claude, bot and foreign identities and every attribution line'
+result=0
+(cd "$ID" && env -u ALLOWED_EMAILS bash "$ROOT/scripts/check-commit-identity.sh" main) > "$TEST_ROOT/identity.log" 2>&1 || result=$?
+[ "$result" -ne 0 ] || fail 'identity check ran without an allowed identity'
+result=0
+(cd "$ID" && env ALLOWED_EMAILS="$OWNER" bash "$ROOT/scripts/check-commit-identity.sh" no-such-branch) > "$TEST_ROOT/identity.log" 2>&1 || result=$?
+[ "$result" -ne 0 ] || fail 'identity check passed with no commits to check'
+pass 'Identity check fails closed without configuration or commits'
 echo 'Bash regressions passed.'
