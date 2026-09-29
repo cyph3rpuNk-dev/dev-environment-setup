@@ -118,3 +118,7 @@ work on a fresh machine. Use the doctor and manual checks for those boundaries.
 
 The shared maintenance policy is [AGENTS.md](AGENTS.md). [CLAUDE.md](CLAUDE.md)
 imports that policy rather than keeping a second copy.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
