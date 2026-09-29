@@ -1,5 +1,22 @@
 #!/usr/bin/env bash
 # Source this file; installation happens only when the function is called.
+
+# The exact legacy shim this repository once shipped; only it may be replaced.
+# Printed with printf rather than a here-document inside a process substitution,
+# which Bash 3.2 (macOS) parses differently.
+legacy_browser_bridge() {
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    '# Hand a URL to the Windows default browser. WSL has no browser of its own.' \
+    'set -euo pipefail' \
+    'if [ $# -lt 1 ]; then' \
+    '  echo "usage: wslview <url>" >&2' \
+    '  exit 2' \
+    'fi' \
+    'exec /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe \' \
+    "     -NoProfile -NonInteractive -Command \"Start-Process '\$1'\" >/dev/null 2>&1"
+}
+
 install_browser_bridge() {
   local source_file="$1" bin_dir="$2" profile_dir="$3"
   local bridge="$bin_dir/wslview" profile="$profile_dir/wsl-browser.sh"
@@ -9,18 +26,7 @@ install_browser_bridge() {
   if [ -L "$bridge" ]; then
     echo "Preserving custom browser bridge: $bridge" >&2; return 1
   elif [ -e "$bridge" ] && ! cmp -s "$source_file" "$bridge"; then
-    if ! cmp -s "$bridge" <(cat <<'LEGACY'
-#!/usr/bin/env bash
-# Hand a URL to the Windows default browser. WSL has no browser of its own.
-set -euo pipefail
-if [ $# -lt 1 ]; then
-  echo "usage: wslview <url>" >&2
-  exit 2
-fi
-exec /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe \
-     -NoProfile -NonInteractive -Command "Start-Process '$1'" >/dev/null 2>&1
-LEGACY
-    ); then
+    if ! cmp -s "$bridge" <(legacy_browser_bridge); then
       echo "Preserving custom browser bridge: $bridge" >&2; return 1
     fi
   fi

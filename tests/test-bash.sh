@@ -25,8 +25,12 @@ mkdir -p "$TEST_ROOT/failing-bin" "$TEST_ROOT/failing-profile"
 sudo() { return 42; }
 if install_browser_bridge "$ROOT/helpers/wslview.sh" "$TEST_ROOT/failing-bin" "$TEST_ROOT/failing-profile"; then fail 'failed installation reported success'; fi
 pass 'Bridge propagates installation failures'
-# Obtain the exact old shipped fixture without executing it.
-awk '/^#!\/usr\/bin\/env bash$/ { n++ } n==2 { if ($0=="LEGACY") exit; print }' "$ROOT/helpers/install-browser-bridge.sh" > "$TEST_ROOT/bin/wslview"
+# The legacy shim's exact bytes are pinned by hash, so the helper cannot drift from
+# what was once shipped.
+legacy_browser_bridge > "$TEST_ROOT/bin/wslview"
+if command -v sha256sum >/dev/null 2>&1; then legacy_sum=$(sha256sum < "$TEST_ROOT/bin/wslview")
+else legacy_sum=$(shasum -a 256 < "$TEST_ROOT/bin/wslview"); fi
+[ "${legacy_sum%% *}" = 6050f130ca1f6ee83dd3bc8078b7ad6e8c149983c9c3281096d4189364a0f80b ] || fail 'legacy bridge bytes changed'
 sudo() { "$@"; }
 install_browser_bridge "$ROOT/helpers/wslview.sh" "$TEST_ROOT/bin" "$TEST_ROOT/profile"
 cmp -s "$ROOT/helpers/wslview.sh" "$TEST_ROOT/bin/wslview" || fail 'legacy upgrade failed'
