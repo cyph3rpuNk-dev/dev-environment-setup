@@ -475,6 +475,16 @@ else {
 if ($Doctor) {
     Say "10. Doctor: environment boundaries and usable configuration"
     if ($env:OS -eq 'Windows_NT') { Ok "Windows host detected" } else { Bad "This script must run on Windows" }
+    # Commits need a name and email. Report only whether they are set, never the values.
+    if (Have 'git') {
+        $gitName = (git config --global --get user.name 2>$null | Out-String).Trim()
+        $gitEmail = (git config --global --get user.email 2>$null | Out-String).Trim()
+        if (-not $gitName -or -not $gitEmail) {
+            Warn "Git commit name or email is not set; set both with git config --global user.name / user.email"
+        }
+        elseif ($gitEmail -match '@users\.noreply\.github\.com$') { Ok "Git commit name and email are set (GitHub private address)" }
+        else { Warn "Git commit email is not a GitHub private (noreply) address, so every pushed commit publishes it" }
+    }
     if (-not $Wsl) {
         Skip "WSL not selected; add -Wsl to check the Linux environment"
     }

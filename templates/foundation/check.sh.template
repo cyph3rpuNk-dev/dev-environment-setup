@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# The repository's one local health gate. Replace each placeholder with a command
-# already used or deliberately approved by this repository's CI.
+# The repository's one local health gate, kept at scripts/check.sh. Replace each
+# placeholder with one simple command already used or deliberately approved by this
+# repository's CI. If a step cannot run yet, delete its line and record it under
+# "Open decisions" in PROJECT-CHARTER.md; never substitute a command that always
+# succeeds.
 set -uo pipefail
-# Copy this gate to scripts/check.sh. Each placeholder is one simple command.
 # Refuse to run until every placeholder is replaced, so an unfinished gate can
 # never report success.
 if grep -q '{{[A-Z_][A-Z_]*}}' "${BASH_SOURCE[0]}"; then
@@ -12,7 +14,9 @@ fi
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." || exit 1
 
 failures=0
+steps=0
 step() {
+  steps=$((steps + 1))
   printf '\n== %s ==\n' "$1"
   shift
   "$@" || failures=$((failures + 1))
@@ -23,4 +27,9 @@ step "lint" {{LINT_COMMAND}}
 step "test" {{TEST_COMMAND}}
 # Add security or packaging checks only after verifying their policy inputs.
 
+# A gate whose steps were all deleted checks nothing, so it must not pass.
+if [ "$steps" -eq 0 ]; then
+  echo 'FAIL: this gate has no steps, so it checks nothing.' >&2
+  exit 1
+fi
 exit "$failures"

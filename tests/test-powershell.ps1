@@ -34,6 +34,14 @@ try {
     [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $template, $utf8)
     $output = & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" | Out-String
     Assert ($LASTEXITCODE -eq 1 -and $output -match 'placeholders') 'Unfilled PowerShell gate refuses to report success'
+    $gate = $template.Replace('{{FORMAT_COMMAND}}', "Write-Output 'formatted'").Replace('{{LINT_COMMAND}}', "Write-Output 'linted'") -replace "(?m)^Step 'test'.*\r?\n", ''
+    [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $gate, $utf8)
+    & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" | Out-Null
+    Assert ($LASTEXITCODE -eq 0) 'PowerShell gate runs with a deleted step'
+    $gate = $template -replace "(?m)^Step .*\r?\n", ''
+    [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $gate, $utf8)
+    $output = & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" | Out-String
+    Assert ($LASTEXITCODE -eq 1 -and $output -match 'no steps') 'PowerShell gate with every step deleted refuses to report success'
 
     # A clean checkout has no ordinary `git diff`, so exercise the real toolkit
     # gate in a committed fixture containing trailing whitespace.
@@ -71,7 +79,7 @@ try {
     # Run the full Windows bootstrap in a child shell with every external tool
     # mocked and a disposable user profile. No real installation or auth occurs.
     $profileHarness = @'
-param([string]$Source, [string]$Fixture, [string]$SelectedStack, [switch]$Agents, [switch]$Inspect, [switch]$UseWsl)
+param([string]$Source, [string]$Fixture, [string]$SelectedStack, [switch]$Agents, [switch]$Inspect, [switch]$UseWsl, [switch]$Diagnose)
 $env:USERPROFILE = $Fixture
 $global:Events = New-Object 'System.Collections.Generic.List[string]'
 function Record([string]$Name, $Arguments) {
@@ -79,7 +87,13 @@ function Record([string]$Name, $Arguments) {
     $global:LASTEXITCODE = 0
 }
 function code { Record 'code' $args }
-function git { Record 'git' $args }
+function git {
+    Record 'git' $args
+    # Only identity lookups answer, from the test's environment.
+    if ($args.Count -ge 4 -and $args[0] -eq 'config' -and $args[2] -eq '--get') {
+        if ($args[3] -eq 'user.name') { $env:TEST_GIT_NAME } elseif ($args[3] -eq 'user.email') { $env:TEST_GIT_EMAIL }
+    }
+}
 function gh { Record 'gh' $args }
 function pwsh { Record 'pwsh' $args }
 function rustup { Record 'rustup' $args; 'stable-x86_64-pc-windows-msvc rustfmt clippy' }
@@ -96,7 +110,7 @@ function claude { Record 'claude' $args; 'context7 github' }
 function codex { Record 'codex' $args }
 function wsl { Record 'wsl' $args }
 function winget { throw 'Unexpected installer' }
-& $Source -Stack $SelectedStack -ConfigureAgents:$Agents -Check:$Inspect -Wsl:$UseWsl
+& $Source -Stack $SelectedStack -ConfigureAgents:$Agents -Check:$Inspect -Wsl:$UseWsl -Doctor:$Diagnose
 $result = $LASTEXITCODE
 [IO.File]::WriteAllLines((Join-Path $Fixture 'events.txt'), $global:Events)
 exit $result
@@ -156,6 +170,25 @@ exit $result
     & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -UseWsl
     $events = Get-Content -Raw "$fixture/events.txt"
     Assert ($events -match 'remote-wsl' -and $events -notmatch 'wsl --install') 'WSL selection adds its extension and never enables WSL without -InstallMissing'
+
+    # Doctor reports whether the Git identity is set, never the values, and writes nothing.
+    $fixture = Join-Path $testRoot 'profile-doctor'
+    $null = New-Item -ItemType Directory -Path $fixture
+    $identityCases = @(
+        @{ Name = ''; Email = ''; Expect = 'name or email is not set' },
+        @{ Name = 'fixture'; Email = '1+Fixture@Users.Noreply.GitHub.com'; Expect = 'set \(GitHub private address\)' },
+        @{ Name = 'fixture'; Email = 'someone@example.invalid'; Expect = 'not a GitHub private \(noreply\) address' }
+    )
+    try {
+        foreach ($case in $identityCases) {
+            $env:TEST_GIT_NAME = $case.Name; $env:TEST_GIT_EMAIL = $case.Email
+            $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -Diagnose | Out-String
+            $events = Get-Content -Raw "$fixture/events.txt"
+            Assert ($output -match $case.Expect -and $output -cnotmatch 'Noreply|example\.invalid') "Windows doctor reports Git identity: $($case.Expect)"
+            Assert ($events -notmatch 'git config --global user\.') 'Windows doctor never writes Git identity'
+        }
+    }
+    finally { Remove-Item Env:\TEST_GIT_NAME, Env:\TEST_GIT_EMAIL -ErrorAction SilentlyContinue }
 
     # Helpers invoke these functions, so no real auth lookup or agent can run.
     function gh {
@@ -311,6 +344,7 @@ exit $result
     $charter = Get-Content -Raw (Join-Path $project 'PROJECT-CHARTER.md')
     Assert ($charter -match 'Canonical development environment: WINDOWS' -and $charter -match 'rationale: chosen explicitly' -and $charter -match '\{\{LICENCE_OR_UNDECIDED\}\}') 'Charter records environment and keeps undecided fields'
     Assert ((Get-Content -Raw (Join-Path $project 'scripts/check.ps1')) -match 'cargo clippy' -and (Get-Content -Raw (Join-Path $project '.gitignore')) -match '/target/') 'Rust stack fills the gate and ignore file'
+    Assert ((Get-Content -Raw (Join-Path $project 'scripts/check.ps1')) -notmatch 'Copy this gate') 'Scaffolded gate does not tell the reader to copy itself'
 
     '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name Plain -Parent $np -WindowsNative no -LinuxTarget no -NoClaude | Out-Null
     Assert ($LASTEXITCODE -eq 0 -and -not (Test-Path (Join-Path $np 'Plain/CLAUDE.md'))) 'No platform tie stays on Windows and -NoClaude is honoured'

@@ -188,7 +188,11 @@ else
     esac
   }
   if install_packages; then ok "system packages installed"
-  else bad "package installation failed; rerun with --no-sudo to continue without them"; fi
+  else
+    bad "package installation failed; read the package manager's error above"
+    warn "  if another update holds a lock (common just after first start), wait for it to"
+    warn "  finish, then rerun; never delete lock files. --no-sudo skips these packages."
+  fi
 fi
 
 # gh 2.40 added --active. Older distribution builds (for example Ubuntu 22.04 and
@@ -570,6 +574,19 @@ if [ "$DOCTOR" = 1 ]; then
     [ -f "$HOME/.claude/settings.json" ] && ok "Claude user settings exist" || warn "Claude user settings missing"
   fi
   if have gh && gh_authenticated; then ok "GitHub CLI authentication works"; else warn "GitHub CLI authentication is unavailable"; fi
+  # Commits need a name and email. Report only whether they are set, never the values.
+  if have git; then
+    GIT_NAME=$(git config --global --get user.name 2>/dev/null || true)
+    GIT_EMAIL=$(git config --global --get user.email 2>/dev/null || true)
+    if [ -z "$GIT_NAME" ] || [ -z "$GIT_EMAIL" ]; then
+      warn "Git commit name or email is not set; set both with git config --global user.name / user.email"
+    else
+      case "$(printf '%s' "$GIT_EMAIL" | tr '[:upper:]' '[:lower:]')" in
+        *@users.noreply.github.com) ok "Git commit name and email are set (GitHub private address)" ;;
+        *) warn "Git commit email is not a GitHub private (noreply) address, so every pushed commit publishes it" ;;
+      esac
+    fi
+  fi
   echo "  Doctor does not verify VS Code profile names or agent sign-in state; see doctor/README.md."
 fi
 

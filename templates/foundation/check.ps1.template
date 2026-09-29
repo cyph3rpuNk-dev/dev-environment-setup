@@ -1,10 +1,12 @@
-# The repository's one local health gate. Replace each placeholder with a command
-# already used or deliberately approved by this repository's CI.
+# The repository's one local health gate, kept at scripts/check.ps1. Replace each
+# placeholder with one command already used or deliberately approved by this
+# repository's CI. If a step cannot run yet, delete its line and record it under
+# "Open decisions" in PROJECT-CHARTER.md; never substitute a command that always
+# succeeds.
 [CmdletBinding()]
 param()
 
-# Copy this gate to scripts/check.ps1. Each placeholder is one command;
-# split multiple native commands into separate Steps so none masks another.
+# Split multiple native commands into separate Steps so none masks another.
 $ErrorActionPreference = 'Stop'
 # Refuse to run until every placeholder is replaced. An unreplaced step would
 # otherwise parse as an empty script block and report success.
@@ -14,7 +16,9 @@ if ((Get-Content -Raw -LiteralPath $PSCommandPath) -match '\{\{[A-Z_]+\}\}') {
 }
 Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 $failures = 0
+$steps = 0
 function Step([string]$Name, [scriptblock]$Action) {
+    $script:steps++
     Write-Host "`n== $Name =="
     $global:LASTEXITCODE = 0
     try {
@@ -31,4 +35,9 @@ Step 'format' { {{FORMAT_COMMAND}} }
 Step 'lint'   { {{LINT_COMMAND}} }
 Step 'test'   { {{TEST_COMMAND}} }
 # Add security or packaging checks only after verifying their policy inputs.
+# A gate whose steps were all deleted checks nothing, so it must not pass.
+if ($steps -eq 0) {
+    Write-Host 'FAIL: this gate has no steps, so it checks nothing.'
+    exit 1
+}
 exit $failures

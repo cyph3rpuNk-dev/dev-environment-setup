@@ -25,7 +25,9 @@ The gate templates resolve the repository root as the parent of `scripts/`; adju
 that if you put the gate elsewhere. Each placeholder is one command, so give separate
 commands separate steps and a later success cannot hide an earlier failure. Both gate
 templates refuse to run while any placeholder remains, so an unfinished gate can never
-report success. Run each command on its own first, then use the completed gate in CI,
+report success. A step that cannot run yet may be deleted and recorded as an open
+decision in the charter, but never replaced with a command that always succeeds; a
+gate with no steps left fails. Run each command on its own first, then use the completed gate in CI,
 VS Code tasks and agent instructions.
 
 Add repository-specific hooks and rules only when a real invariant needs enforcement,

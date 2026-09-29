@@ -207,7 +207,7 @@ Copy the applicable gate template:
 - `templates/foundation/check.ps1.template` for Windows.
 - `templates/foundation/check.sh.template` for Linux or WSL.
 
-Replace the formatting, linting, and test placeholders with commands already selected for the project. Add security, schema, data, documentation, packaging, or integration checks only when their inputs and failure policy are defined.
+Replace the formatting, linting, and test placeholders with commands already selected for the project. For a language the toolkit does not automate (anything other than Rust or Python), use that language's own tools, installed from its official documentation. If a step cannot run yet, for example because there are no tests, delete its line and record it under "Open decisions" in the charter. Never substitute a command that always succeeds; the gate refuses to pass when every step has been deleted. Add security, schema, data, documentation, packaging, or integration checks only when their inputs and failure policy are defined.
 
 The gate must:
 

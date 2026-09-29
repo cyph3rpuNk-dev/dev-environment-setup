@@ -104,6 +104,15 @@ PATH**. Homebrew's VS Code install adds it automatically; a manual install does 
 
 ## Linux and GitHub
 
+### Package installation fails with "Could not get lock"
+
+apt allows one installer at a time. On a newly installed Ubuntu, including a new WSL
+distribution, automatic security updates can run during the first minutes, and the
+error names the process holding the lock (for example `unattended-upgr`). Wait a
+few minutes for it to finish, then rerun the same bootstrap command. Do not delete the
+lock files: apt itself warns that removing them can break the system. If the named
+process is an install you started yourself in another terminal, let it finish first.
+
 ### `git push` over HTTPS stalls with no output
 
 Git is waiting on a username prompt that never renders. After `gh auth login`, rerun

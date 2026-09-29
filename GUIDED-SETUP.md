@@ -4,10 +4,11 @@
 will interview you about what you want to build, then walk you through setting up
 your computer and starting the project with this toolkit. Use one of these prompts:
 
-- **In a chat assistant** (you run the commands yourself): attach this file and send
-  *"Follow GUIDED-SETUP.md from https://github.com/cyph3rpuNk-dev/dev-environment-setup
-  to guide me. Ask me one question at a time and wait for my answers and command output
-  before moving on."*
+- **In a chat assistant** (you run the commands yourself): attach this file and
+  `docs/troubleshooting.md` and send *"Follow GUIDED-SETUP.md from
+  https://github.com/cyph3rpuNk-dev/dev-environment-setup to guide me, and use
+  troubleshooting.md when something fails. Ask me one question at a time and wait for
+  my answers and command output before moving on."*
 - **In an agent inside your editor** (Claude Code, Codex): open the toolkit folder and
   send *"Read GUIDED-SETUP.md and follow it. Ask me before running any command."*
 
@@ -38,8 +39,12 @@ than improvising.
 3. **Check before changing.** Every setup script has a check mode that changes nothing.
    Run it first and read its `ok` / `warn` / `FAIL` lines with the user.
 4. **Read the output.** After each command, ask the user to paste the output (chat) or
-   read it yourself (agent). Continue only when it shows success. On `FAIL`, stop, find
-   the matching entry in `docs/troubleshooting.md`, and fix that before anything else.
+   read it yourself (agent). Continue only when it shows success, and describe only what
+   the output actually shows: never say a check covers something it does not report.
+   On `FAIL`, stop, find the matching entry in `docs/troubleshooting.md`, and fix that
+   before anything else. In chat mode, if that file was not attached, ask the user to
+   attach it. If no entry matches, say so, work only from what the error itself states,
+   and never suggest deleting lock files, disabling checks or skipping the failed step.
 5. **Ask before acting.** In an agent, ask before every command that installs, changes
    settings, needs administrator or `sudo` rights, or touches GitHub. Say why it needs
    those rights.
@@ -102,7 +107,8 @@ project charter later.
 | Both yes | It is cross-platform. Ask which side matters most; build there and let CI test the other. |
 | Both no | Build where they already are. |
 
-State the recommendation and the reason in one or two sentences, for example: *"Your
+Once you have all eight answers, state the recommendation and the reason in one or
+two sentences, for example: *"Your
 WordPress plugin will run on a Linux web server, so we will build it in Linux. On your
 Windows PC that means WSL, a Linux environment that runs inside Windows."* Get their
 agreement before continuing.
@@ -195,7 +201,9 @@ It asks for their Linux password when it installs packages with `sudo`.
 3. **Optional AI agents:** only if they want them; the commands are in `START-HERE.md`,
    Step 7.
 4. **Verify:** rerun the bootstrap with `-Doctor` (Windows) or `--doctor` (Mac, Linux)
-   and the same options. Warnings are acceptable if you understand them; `FAIL` is not.
+   and the same options. Among other things it reports whether the Git commit name and
+   email are set and whether the email is a GitHub private address, without showing
+   either. Warnings are acceptable if you understand them; `FAIL` is not.
 
 Do this separately in each environment they use. Windows and WSL do not share Git
 settings or sign-ins.
@@ -221,11 +229,45 @@ bash new-project.sh --name my-tool --windows-native no --linux-target yes --stac
 - It never overwrites an existing folder and never commits.
 
 It creates the project in `~/src/<name>` (Windows: `%USERPROFILE%\src\<name>`) with a
-`PROJECT-CHARTER.md`. Now fill the charter **with** them: go through each `{{...}}`
-placeholder, ask the question it represents, and write their answer. Anything they do
-not know yet stays under "Open decisions". Then follow the "Next steps" the scaffolder
-printed: initialize the language (`uv init --app .` then `uv add --dev ruff pytest` for
-Python; `cargo init` for Rust), run the gate (`./scripts/check.sh` or
+`PROJECT-CHARTER.md`.
+
+### Open the project in an editor
+
+The user edits files in VS Code. From a terminal in the project folder:
+
+- **Windows projects:** `code .` in PowerShell.
+- **WSL projects:** `code .` in the WSL terminal, which opens a Remote-WSL window. If
+  `code` is not found, open a new terminal and try again; if it is still missing, open
+  VS Code on Windows and use its WSL extension to open the folder. The first time,
+  rerun the Linux bootstrap from that window's integrated terminal (in the toolkit
+  folder) so editor extensions are installed on the WSL side.
+- **Mac and Linux:** `code .`.
+
+In chat mode you cannot see their files. When you need one, ask them to open it and
+paste its contents, then give the exact text for each change. Never ask them to paste a
+file that holds secrets, such as `.env`.
+
+### Fill the charter
+
+Fill the charter **with** them: go through each `{{...}}` placeholder, ask the question
+it represents, and write their answer. Anything they do not know yet stays under "Open
+decisions". Do the same for the placeholders in `AGENTS.md`.
+
+### Language, gate and first commit
+
+- **Python or Rust:** `--stack` already filled the gate. Initialize the language:
+  `uv init --app .` then `uv add --dev ruff pytest` for Python; `cargo init` for Rust.
+- **Any other language** (for example PHP for a WordPress plugin): the toolkit neither
+  installs it nor fills its gate, and the gate refuses to run until its placeholders
+  are replaced. Say so. Install the language in the chosen environment by following its
+  official installation guide, name the page you are using, and confirm it works with
+  its version command before going on. Then replace each gate placeholder with that
+  language's own format, lint or test command, running each by hand first. If a step
+  cannot run yet (for example, there are no tests), delete its line and record it under
+  "Open decisions"; never substitute a command that always succeeds. A gate with every
+  step deleted fails.
+
+Then run the gate (`./scripts/check.sh` or
 `powershell -NoProfile -File scripts/check.ps1`), review `git status`, make the first
 commit, and create a **private** GitHub repository:
 

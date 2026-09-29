@@ -14,7 +14,9 @@ bash bootstrap-macos.sh --doctor --stack=rust,python --configure-agents   # macO
 
 The doctor is deliberately read-only. It checks the operating-system boundary (native
 Windows, macOS, native Linux or WSL), base tools, editor extensions, and whatever stacks,
-WSL and agent configuration you select. Selections are not persisted. The Windows
+WSL and agent configuration you select. It also reports whether your global Git
+commit name and email are set and whether the email is a GitHub private (noreply)
+address, without printing either value. Selections are not persisted. The Windows
 doctor with `-Wsl` starts the default WSL distribution to prove it works, because a
 listed distribution can have a missing disk; that starts a process but installs and
 writes nothing.
@@ -35,7 +37,7 @@ confirm the intended profile is active and code-running extensions show the righ
 install location.
 
 Missing required tools and missing system packages are failures. Missing optional
-tools, GitHub authentication and agent configuration are warnings. Exit zero is not
+tools, GitHub authentication, Git commit identity and agent configuration are warnings. Exit zero is not
 proof that every optional feature is ready.
 
 To validate changes to this toolkit itself, use `scripts/check.ps1` as described in

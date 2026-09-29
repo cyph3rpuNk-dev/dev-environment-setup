@@ -59,7 +59,12 @@ case "$name" in
     [ "${TEST_ALLOW_SUDO:-0}" = 1 ] || { echo 'Unexpected privileged command in bootstrap test' >&2; exit 90; }
     exec "$@" ;;
   dnf|apt-get)
-    [ "${TEST_ALLOW_SUDO:-0}" = 1 ] || { echo 'Unexpected package manager call' >&2; exit 90; } ;;
+    [ "${TEST_ALLOW_SUDO:-0}" = 1 ] || { echo 'Unexpected package manager call' >&2; exit 90; }
+    # A background update holding the dpkg lock, as on a freshly installed Ubuntu.
+    if [ "${TEST_PKG_LOCKED:-0}" = 1 ] && [ "$1" = install ]; then
+      echo 'E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 412 (unattended-upgr)' >&2
+      exit 100
+    fi ;;
   rpm) if missing "$2"; then exit 1; fi ;;
   dpkg-query) for last; do :; done; if missing "$last"; then exit 1; fi; printf 'install ok installed' ;;
   brew)
@@ -89,6 +94,13 @@ case "$name" in
     case "$version $*" in 2.[0-3][0-9].*--active*) echo 'unknown flag: --active' >&2; exit 1;; esac
     printf 'workflow\n' ;;
   claude) printf 'context7 github\n' ;;
+  git)
+    # Only identity lookups answer; other git calls behave as before.
+    if [ "${1:-} ${2:-} ${3:-}" = 'config --global --get' ]; then
+      case "${4:-}" in user.name) value=${TEST_GIT_NAME:-} ;; user.email) value=${TEST_GIT_EMAIL:-} ;; *) value= ;; esac
+      [ -n "$value" ] || exit 1
+      printf '%s\n' "$value"
+    fi ;;
   curl)
     # A partial downloaded script must never be executed after curl fails.
     while [ "$#" -gt 0 ]; do
@@ -143,7 +155,18 @@ run_bootstrap fedora wsl --doctor --stack=rust --configure-agents > "$TEST_ROOT/
 cmp -s "$TEST_ROOT/config.before" "$TEST_ROOT/user/.codex/config.toml" || fail 'Doctor changed config'
 if grep -Eq '^(sudo|dnf|apt-get|curl) |^cargo (install|binstall)|^code --install|^claude mcp add|^gh auth setup-git' "$TEST_EVENTS"; then fail 'Doctor invoked mutation'; fi
 grep -q 'src does not exist yet' "$TEST_ROOT/doctor.log" || fail 'WSL doctor did not report project location'
+grep -q 'Git commit name or email is not set' "$TEST_ROOT/doctor.log" || fail 'doctor did not report a missing Git identity'
+if grep -Eq '^git config --global user\.' "$TEST_EVENTS"; then fail 'doctor wrote Git identity'; fi
 pass 'Doctor performs no provisioning or configuration writes'
+TEST_GIT_NAME=fixture TEST_GIT_EMAIL=1+Fixture@Users.Noreply.GitHub.com run_bootstrap ubuntu native --doctor > "$TEST_ROOT/doctor-id.log"
+grep -q 'Git commit name and email are set (GitHub private address)' "$TEST_ROOT/doctor-id.log" || fail 'GitHub private address not recognised'
+if grep -q 'Noreply' "$TEST_ROOT/doctor-id.log"; then fail 'doctor printed the commit email'; fi
+TEST_GIT_NAME=fixture TEST_GIT_EMAIL=someone@example.invalid run_bootstrap ubuntu native --doctor > "$TEST_ROOT/doctor-public.log"
+grep -q 'not a GitHub private (noreply) address' "$TEST_ROOT/doctor-public.log" || fail 'public commit email not reported'
+if grep -q 'example.invalid' "$TEST_ROOT/doctor-public.log"; then fail 'doctor printed the commit email'; fi
+TEST_GIT_NAME=fixture run_bootstrap ubuntu native --doctor > "$TEST_ROOT/doctor-noemail.log"
+grep -q 'Git commit name or email is not set' "$TEST_ROOT/doctor-noemail.log" || fail 'missing commit email not reported'
+pass 'Doctor reports whether the Git identity is set without printing it'
 if run_bootstrap fedora wsl --no-sudo --install-browser-bridge > "$TEST_ROOT/conflict.log" 2>&1; then fail 'conflicting options accepted'; fi
 pass 'Conflicting privilege options fail before provisioning'
 
@@ -171,6 +194,13 @@ TEST_ALLOW_SUDO=1 TEST_MISSING_PKGS=gh run_bootstrap fedora native > "$TEST_ROOT
 grep -q '^dnf install -y gh$' "$TEST_EVENTS" || fail 'dnf did not install the missing package'
 if grep -q '^apt-get ' "$TEST_EVENTS"; then fail 'dnf system invoked apt-get'; fi
 pass 'Missing packages use apt on Debian/Ubuntu and dnf on Fedora'
+result=0
+TEST_ALLOW_SUDO=1 TEST_MISSING_PKGS=gh TEST_PKG_LOCKED=1 run_bootstrap ubuntu native > "$TEST_ROOT/locked.log" 2>&1 || result=$?
+[ "$result" -ne 0 ] || fail 'failed package installation returned success'
+grep -q 'package installation failed' "$TEST_ROOT/locked.log" && grep -q 'wait for it to' "$TEST_ROOT/locked.log" \
+  && grep -q 'never delete lock files' "$TEST_ROOT/locked.log" || fail 'package lock failure not explained'
+if grep -q 'rerun with --no-sudo to continue' "$TEST_ROOT/locked.log"; then fail 'package failure still points to --no-sudo first'; fi
+pass 'A failed package installation explains lock waits and fails'
 result=0
 TEST_MISSING_PKGS=build-essential run_bootstrap ubuntu native --check --stack=rust > "$TEST_ROOT/apt-rust.log" || result=$?
 [ "$result" -ne 0 ] && grep -q 'build-essential is missing' "$TEST_ROOT/apt-rust.log" || fail 'missing Rust build packages not reported on apt'
@@ -286,6 +316,14 @@ result=0
 bash "$TEST_ROOT/project/scripts/unfilled.sh" > "$TEST_ROOT/unfilled.log" 2>&1 || result=$?
 [ "$result" -eq 1 ] && grep -q 'placeholders' "$TEST_ROOT/unfilled.log" || fail 'unfilled gate did not refuse to run'
 pass 'Unfilled Bash gate refuses to report success'
+sed -e 's/{{FORMAT_COMMAND}}/true/' -e 's/{{LINT_COMMAND}}/true/' -e '/{{TEST_COMMAND}}/d' \
+    "$ROOT/templates/foundation/check.sh.template" > "$TEST_ROOT/project/scripts/partial.sh"
+bash "$TEST_ROOT/project/scripts/partial.sh" > /dev/null 2>&1 || fail 'gate with a deleted step failed'
+sed -e '/^step "/d' "$ROOT/templates/foundation/check.sh.template" > "$TEST_ROOT/project/scripts/empty.sh"
+result=0
+bash "$TEST_ROOT/project/scripts/empty.sh" > "$TEST_ROOT/empty.log" 2>&1 || result=$?
+[ "$result" -eq 1 ] && grep -q 'no steps' "$TEST_ROOT/empty.log" || fail 'gate without steps reported success'
+pass 'Bash gate allows deleting a step but refuses to pass with none'
 
 # Scaffolder: real git in a temporary parent; stdin is never a terminal here.
 NP="$TEST_ROOT/np"
@@ -302,6 +340,7 @@ grep -q 'Environment rationale: it runs on or deploys to Linux' "$NP/demo/PROJEC
 grep -q '{{LICENCE_OR_UNDECIDED}}' "$NP/demo/PROJECT-CHARTER.md" || fail 'undecided charter fields were filled in'
 grep -q 'uv run ruff check' "$NP/demo/scripts/check.sh" && grep -qx '.venv/' "$NP/demo/.gitignore" || fail 'Python stack not applied'
 if grep -q '{{[A-Z_][A-Z_]*}}' "$NP/demo/scripts/check.sh"; then fail 'stack gate kept placeholders'; fi
+if grep -q 'Copy this gate' "$NP/demo/scripts/check.sh"; then fail 'scaffolded gate tells the reader to copy itself'; fi
 if grep -rl --exclude-dir=.git $'\r' "$NP/demo" | grep -q .; then fail 'scaffolder wrote CRLF'; fi
 pass 'Scaffolder creates an uncommitted Linux repository and records the environment and reason'
 new_project --name plain --parent "$NP" --environment linux --no-claude > /dev/null
