@@ -2,9 +2,7 @@
 
 This toolkit supports Claude Code and Codex. Neither is required. This page explains
 the defaults `-ConfigureAgents` / `--configure-agents` create and how to keep one
-project policy that both agents follow. It is distilled from the worked example in
-[examples/two-rust-repos-analysis.md](../examples/two-rust-repos-analysis.md), which
-shows the same ideas applied to two real repositories.
+project policy that both agents follow.
 
 Agent features change quickly. Recheck the official documentation before relying on
 a version-sensitive detail: <https://code.claude.com/docs> and

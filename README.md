@@ -91,7 +91,6 @@ side, it creates nothing and prints the command for the right one.
 | [templates/](templates/README.md) | Repository foundation templates used by the scaffolder |
 | [doctor/](doctor/README.md) | What the automated checks can and cannot prove |
 | `helpers/` | Browser bridge for WSL sign-in; Codex launcher with a process-scoped GitHub token |
-| [examples/](examples/README.md) | Worked, dated examples from real projects; not part of setup |
 
 ## Maintaining this toolkit
 

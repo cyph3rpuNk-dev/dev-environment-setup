@@ -3,8 +3,7 @@
 This repository maintains a cross-platform workstation setup and project-scaffolding
 toolkit for Windows and Linux (Fedora/RHEL via dnf, Debian/Ubuntu via apt), with WSL as
 an optional Linux environment on Windows. It is not application source. Start with
-`README.md` for maintenance and `START-HERE.md` for workstation onboarding. Material in
-`examples/` is a dated snapshot, not authority to modify other repositories.
+`README.md` for maintenance and `START-HERE.md` for workstation onboarding.
 
 ## Validation
 

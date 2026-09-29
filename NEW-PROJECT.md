@@ -286,8 +286,6 @@ Review the result as if it came from another contributor. Agent-generated policy
 
 ---
 
-Worked examples from real projects, including a data-project charter, are in [examples/](examples/README.md).
-
 # Reusable readiness checklist
 
 A new project is ready for feature work when:

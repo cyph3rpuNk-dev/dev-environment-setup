@@ -42,5 +42,4 @@ Do not overwrite established documentation or policy with a generic template.
 4. Preserve accurate hand-written content verbatim when moving it.
 5. Work on a branch, run the current gate, review the diff, and use a pull request.
 
-See [NEW-PROJECT.md](../NEW-PROJECT.md) for the full new-project workflow and
-[examples/](../examples/README.md) for dated examples from real projects.
+See [NEW-PROJECT.md](../NEW-PROJECT.md) for the full new-project workflow.
