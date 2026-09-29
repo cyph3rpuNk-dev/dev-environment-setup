@@ -18,6 +18,9 @@ Not sure which kind of project you have? `new-project.ps1` and `new-project.sh` 
 questions and recommend one; [NEW-PROJECT.md](NEW-PROJECT.md) explains the reasoning.
 You can add WSL later; nothing in Part 1 depends on it.
 
+Prefer to be guided? Give an AI assistant [GUIDED-SETUP.md](GUIDED-SETUP.md) and it will
+ask about your project and walk you through these steps one at a time.
+
 ## Before you begin
 
 You need:

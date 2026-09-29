@@ -77,6 +77,13 @@ The scaffolder asks whether the project is a native Windows program and whether 
 targets Linux, recommends where it belongs and says why. If you run it on the wrong
 side, it creates nothing and prints the command for the right one.
 
+## Let an AI assistant guide you
+
+New to this? Give [GUIDED-SETUP.md](GUIDED-SETUP.md) to an AI assistant such as Claude
+or ChatGPT. It asks what you want to build, recommends where to build it and why, and
+walks you through these commands one step at a time, including bringing an existing
+project into order. The file begins with the exact prompt to use.
+
 ## What it never does
 
 - Uninstall software, overwrite existing agent or editor settings, or replace a custom
@@ -90,7 +97,8 @@ side, it creates nothing and prints the command for the right one.
 
 | Path | Purpose |
 |---|---|
-| [START-HERE.md](START-HERE.md) | Guided machine setup for Windows, Linux, and Windows + WSL |
+| [START-HERE.md](START-HERE.md) | Guided machine setup for Windows, macOS, Linux, and Windows + WSL |
+| [GUIDED-SETUP.md](GUIDED-SETUP.md) | Instructions that let an AI assistant interview you and guide the whole setup |
 | [NEW-PROJECT.md](NEW-PROJECT.md) | Turning an idea into a repository; what the scaffolder creates and what you still decide |
 | `bootstrap-windows.ps1`, `bootstrap-linux.sh` | Rerunnable setup with `-Check`/`--check` and `-Doctor`/`--doctor` modes; the Linux script also handles macOS |
 | `bootstrap-macos.sh` | macOS entry point; runs `bootstrap-linux.sh` |
