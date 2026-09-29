@@ -94,6 +94,11 @@ skip() { printf '  \033[90mskip\033[0m  %s\n' "$1"; }
 warn() { printf '  \033[33mwarn\033[0m  %s\n' "$1"; }
 bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=$((FAIL + 1)); }
 have() { command -v "$1" >/dev/null 2>&1; }
+# Put an installer's bin directory on PATH for this run. The installers' own env
+# scripts are not sourced: that would run shell code, even in check mode.
+add_path_dir() {
+  case ":$PATH:" in *":$1:"*) ;; *) if [ -d "$1" ]; then PATH="$1:$PATH"; fi ;; esac
+}
 
 # Download an installer to a private temporary file and run it only if the
 # download completed. A partial script is never executed.
@@ -231,8 +236,7 @@ else
   echo "  installing rustup from https://rustup.rs ..."
   # rustup adds ~/.cargo/bin to the shell profile so new terminals find cargo.
   if run_downloaded_installer https://sh.rustup.rs -y; then
-    # shellcheck disable=SC1091
-    if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
+    add_path_dir "$HOME/.cargo/bin"
     have rustup && ok "rustup installed (open a new terminal to use it)" \
       || bad "rustup installer completed but rustup is unavailable"
   else
@@ -241,8 +245,7 @@ else
 fi
 
 # Make sure this shell can see cargo even on a first run.
-# shellcheck disable=SC1091
-[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+add_path_dir "$HOME/.cargo/bin"
 
 if have rustup && [ "$CHECK_ONLY" = 0 ]; then
   rustup component add rustfmt clippy && ok "rustfmt + clippy" \
@@ -297,8 +300,7 @@ else
   echo "  installing uv from https://astral.sh/uv ..."
   # The uv installer writes ~/.local/bin and adds it to the shell profile.
   if run_downloaded_installer https://astral.sh/uv/install.sh; then
-    # shellcheck disable=SC1091
-    if [ -f "$HOME/.local/bin/env" ]; then . "$HOME/.local/bin/env"; fi
+    add_path_dir "$HOME/.local/bin"
     have uv && ok "uv installed (open a new terminal to use it)" \
       || bad "uv installer completed but uv is unavailable"
   else
@@ -522,6 +524,9 @@ else
     "allow": [],
     "deny": [
       "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
       "Read(**/*.pfx)",
       "Read(**/*.p12)",
       "Read(~/.gnupg/**)",

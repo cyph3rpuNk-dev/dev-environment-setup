@@ -14,7 +14,7 @@ charter decision into agent policy.
 
 ## Required gate
 
-Run `{{GATE_COMMAND}}` before declaring a change complete. CI invokes the same gate.
+Run `{{GATE_COMMAND}}` before declaring a change complete. When CI is added, it must run the same gate.
 
 ## Invariants
 

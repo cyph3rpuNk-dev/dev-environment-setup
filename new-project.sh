@@ -112,8 +112,19 @@ fi
 
 case "$PARENT" in /*) ;; *) PARENT="$PWD/$PARENT" ;; esac
 if [ "$IS_WSL" = 1 ]; then
-  case "$PARENT/" in
-    /mnt/*) die "$PARENT is on the Windows filesystem. Linux projects belong on the Linux filesystem, for example ~/src" ;;
+  # Judge where the project would really land: resolve symlinks and '..' in the part
+  # of the path that exists. A missing part may not contain '..', which could climb
+  # back out of it.
+  existing=$PARENT missing=""
+  while [ ! -d "$existing" ]; do
+    missing="/${existing##*/}$missing"
+    existing=${existing%/*}
+    [ -n "$existing" ] || existing=/
+  done
+  case "$missing/" in */../*) die "use a --parent path without '..' in the part that does not exist yet" ;; esac
+  resolved="$(cd -P -- "$existing" && pwd -P)$missing" || die "cannot resolve $PARENT"
+  case "$resolved/" in
+    /mnt/*) die "$PARENT is on the Windows filesystem ($resolved). Linux projects belong on the Linux filesystem, for example ~/src" ;;
   esac
 fi
 TARGET="$PARENT/$NAME"
@@ -163,6 +174,20 @@ render() { # render TEMPLATE OUTPUT KEY VALUE ...
   done
 }
 
+# If anything below fails, remove what this run created so a rerun can start clean.
+# The target is ours: it did not exist, or it was an empty directory, before this point.
+if [ -d "$TARGET" ]; then TARGET_EXISTED=1; else TARGET_EXISTED=0; fi
+CREATED=0
+cleanup_partial() {
+  [ "$CREATED" = 1 ] && return
+  if [ "$TARGET_EXISTED" = 1 ]; then
+    find "$TARGET" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null
+  else
+    rm -rf -- "$TARGET"
+  fi
+  echo "new-project: setup failed; removed the partial project at $TARGET" >&2
+}
+trap cleanup_partial EXIT
 set -e
 mkdir -p -- "$TARGET/scripts"
 render README.md.template "$TARGET/README.md" PROJECT_NAME "$NAME" ENVIRONMENT "$ENV_TEXT" GATE_COMMAND "$GATE"
@@ -187,6 +212,8 @@ render editorconfig.template "$TARGET/.editorconfig"
 git init --quiet -- "$TARGET"
 git -C "$TARGET" symbolic-ref HEAD refs/heads/main
 set +e
+CREATED=1
+trap - EXIT
 
 cat <<EOF
 

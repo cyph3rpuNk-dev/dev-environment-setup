@@ -103,6 +103,9 @@ tested yet.
 - Install a WSL distribution, Homebrew or Apple's Command Line Tools for you, select the
   Visual Studio C++ workload, or decide a project's licence, security rules or
   supported platforms. It prints the official command instead.
+- Pin tool versions. It installs the current official releases (rustup and uv from
+  their install scripts, winget, Homebrew, apt and dnf packages, VS Code extensions), so
+  a later run can install newer versions than an earlier one.
 
 ## Layout
 

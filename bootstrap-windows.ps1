@@ -151,6 +151,7 @@ foreach ($t in $base) {
 if ($wantRust) {
 Say "2. Rust toolchain and the MSVC linker"
 
+$msvcHost = $false
 if (Have 'rustup') {
     if (-not $Check) {
         rustup component add rustfmt clippy | Out-Host
@@ -158,7 +159,8 @@ if (Have 'rustup') {
         else { Bad "could not install rustfmt + clippy" }
     }
     $hostLine = (rustup show 2>$null | Out-String)
-    if ($hostLine -match 'msvc') { Ok "MSVC host toolchain in use" }
+    $msvcHost = $hostLine -match 'msvc'
+    if ($msvcHost) { Ok "MSVC host toolchain in use" }
     else { Warn "MSVC host toolchain not detected. For Windows-native Rust use: rustup default stable-x86_64-pc-windows-msvc" }
 }
 else { Bad "rustup not available; the rest of this section is skipped" }
@@ -184,7 +186,9 @@ if ((Have 'cargo') -and -not $Check) {
         $locationPushed = $true
         cargo build --quiet
         if ($LASTEXITCODE -ne 0) { throw "Could not link the probe; install Visual Studio Build Tools with Desktop development with C++" }
-        Ok "MSVC linker works"
+        # Only an MSVC toolchain proves the MSVC linker; otherwise report what was shown.
+        if ($msvcHost) { Ok "MSVC linker works" }
+        else { Ok "the active Rust toolchain links a test program (it is not the MSVC toolchain)" }
     }
     catch { Bad "Linker probe failed: $_" }
     finally {
@@ -455,6 +459,9 @@ else {
     "allow": [],
     "deny": [
       "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
       "Read(**/*.pfx)",
       "Read(**/*.p12)",
       "Read(~/.gnupg/**)",

@@ -263,6 +263,14 @@ exit $result
         Assert ($script:buildCalls -eq $scenario[2] -and $script:probeErrors -eq $scenario[3]) 'Linker probe checks initialization and build results'
         Assert ((Get-Location).Path -eq $before) 'Linker probe restores working directory'
     }
+    # Only an MSVC toolchain may be reported as proving the MSVC linker.
+    function Ok { param($Message) $script:okMessages += @($Message) }
+    $script:initExit = 0; $script:buildExit = 0
+    foreach ($msvc in @($true, $false)) {
+        $msvcHost = $msvc; $script:okMessages = @()
+        & ([scriptblock]::Create($probeAst.Extent.Text))
+        Assert (($script:okMessages -contains 'MSVC linker works') -eq $msvc) "Linker probe claims MSVC only for an MSVC toolchain (msvc=$msvc)"
+    }
 
     # Check the real winget and MCP branches, with commands replaced by stubs.
     $baseLoop = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.ForEachStatementAst] -and $node.Extent.Text.StartsWith('foreach ($t in $base)') }, $true)
@@ -360,6 +368,27 @@ exit $result
     Assert ($LASTEXITCODE -eq 1 -and -not (Test-Path (Join-Path $testRoot 'escape'))) 'Scaffolder rejects unsafe names'
     '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name Asks -Parent $np | Out-Null
     Assert ($LASTEXITCODE -eq 1 -and -not (Test-Path (Join-Path $np 'Asks'))) 'Scaffolder never guesses missing answers'
+
+    # A failure part-way through removes what the run created. A stand-in git fails on init.
+    $failGit = Join-Path $testRoot 'failgit'
+    $null = New-Item -ItemType Directory -Path $failGit
+    if ($env:OS -eq 'Windows_NT') {
+        [IO.File]::WriteAllText((Join-Path $failGit 'git.cmd'), "@echo fatal: simulated failure 1>&2`r`n@exit /b 1`r`n", $utf8)
+    }
+    else {
+        [IO.File]::WriteAllText((Join-Path $failGit 'git'), "#!/bin/sh`necho 'fatal: simulated failure' >&2`nexit 1`n", $utf8)
+        chmod +x (Join-Path $failGit 'git')
+    }
+    $savedPath = $env:PATH
+    try {
+        $env:PATH = $failGit + [IO.Path]::PathSeparator + $savedPath
+        $output = '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name Broken -Parent $np -Environment Windows | Out-String
+        Assert ($LASTEXITCODE -eq 1 -and -not (Test-Path (Join-Path $np 'Broken')) -and $output -match 'removed the partial project') 'A failed scaffold removes the project it created'
+        $null = New-Item -ItemType Directory -Path (Join-Path $np 'WasEmpty')
+        '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name WasEmpty -Parent $np -Environment Windows | Out-Null
+        Assert ($LASTEXITCODE -eq 1 -and @(Get-ChildItem -Force -LiteralPath (Join-Path $np 'WasEmpty')).Count -eq 0) 'A failed scaffold restores an empty target directory'
+    }
+    finally { $env:PATH = $savedPath }
 
     # Embedded Claude JSON must stay valid on both platforms.
     foreach ($file in @('bootstrap-windows.ps1', 'bootstrap-linux.sh')) {

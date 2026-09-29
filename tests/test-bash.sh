@@ -144,6 +144,9 @@ grep -q '^rustup component add' "$TEST_EVENTS" || fail 'Rust selection skipped c
 grep -q 'rust-analyzer' "$TEST_EVENTS" || fail 'Rust selection skipped extensions'
 cp "$TEST_ROOT/user/.codex/config.toml" "$TEST_ROOT/config.before"
 cp "$TEST_ROOT/user/.claude/settings.json" "$TEST_ROOT/settings.before"
+for rule in 'Read(**/.env)' 'Read(**/.env.*)' 'Read(**/*.pem)' 'Read(**/*.key)'; do
+  grep -qF "\"$rule\"" "$TEST_ROOT/user/.claude/settings.json" || fail "Claude settings lack $rule"
+done
 run_bootstrap fedora wsl --no-sudo --stack=rust --configure-agents > "$TEST_ROOT/second.log"
 cmp -s "$TEST_ROOT/config.before" "$TEST_ROOT/user/.codex/config.toml" || fail 'Codex config changed on rerun'
 cmp -s "$TEST_ROOT/settings.before" "$TEST_ROOT/user/.claude/settings.json" || fail 'Claude config changed on rerun'
@@ -158,6 +161,14 @@ grep -q 'src does not exist yet' "$TEST_ROOT/doctor.log" || fail 'WSL doctor did
 grep -q 'Git commit name or email is not set' "$TEST_ROOT/doctor.log" || fail 'doctor did not report a missing Git identity'
 if grep -Eq '^git config --global user\.' "$TEST_EVENTS"; then fail 'doctor wrote Git identity'; fi
 pass 'Doctor performs no provisioning or configuration writes'
+# Read-only modes must not run shell code from the user's home, even rustup's env file.
+mkdir -p "$TEST_ROOT/user/.cargo"
+printf 'touch "%s"\n' "$TEST_ROOT/cargo-env-ran" > "$TEST_ROOT/user/.cargo/env"
+run_bootstrap fedora native --no-sudo --check --stack=rust > /dev/null 2>&1 || true
+run_bootstrap fedora native --no-sudo --doctor --stack=rust > /dev/null 2>&1 || true
+[ ! -e "$TEST_ROOT/cargo-env-ran" ] || fail 'check or doctor mode ran ~/.cargo/env'
+rm -rf -- "$TEST_ROOT/user/.cargo"
+pass 'Check and doctor modes never run ~/.cargo/env'
 TEST_GIT_NAME=fixture TEST_GIT_EMAIL=1+Fixture@Users.Noreply.GitHub.com run_bootstrap ubuntu native --doctor > "$TEST_ROOT/doctor-id.log"
 grep -q 'Git commit name and email are set (GitHub private address)' "$TEST_ROOT/doctor-id.log" || fail 'GitHub private address not recognised'
 if grep -q 'Noreply' "$TEST_ROOT/doctor-id.log"; then fail 'doctor printed the commit email'; fi
@@ -341,6 +352,9 @@ grep -q '{{LICENCE_OR_UNDECIDED}}' "$NP/demo/PROJECT-CHARTER.md" || fail 'undeci
 grep -q 'uv run ruff check' "$NP/demo/scripts/check.sh" && grep -qx '.venv/' "$NP/demo/.gitignore" || fail 'Python stack not applied'
 if grep -q '{{[A-Z_][A-Z_]*}}' "$NP/demo/scripts/check.sh"; then fail 'stack gate kept placeholders'; fi
 if grep -q 'Copy this gate' "$NP/demo/scripts/check.sh"; then fail 'scaffolded gate tells the reader to copy itself'; fi
+if grep -q 'CI runs the same gate' "$NP/demo/README.md" || grep -q 'CI invokes the same gate' "$NP/demo/AGENTS.md"; then
+  fail 'generated files claim CI that was not created'
+fi
 if grep -rl --exclude-dir=.git $'\r' "$NP/demo" | grep -q .; then fail 'scaffolder wrote CRLF'; fi
 pass 'Scaffolder creates an uncommitted Linux repository and records the environment and reason'
 new_project --name plain --parent "$NP" --environment linux --no-claude > /dev/null
@@ -360,6 +374,32 @@ result=0; new_project --name asks --parent "$NP" > /dev/null 2>&1 || result=$?
 result=0; NP_KERNEL=wsl new_project --name onwindows --parent /mnt/c/src --environment linux > /dev/null 2>&1 || result=$?
 [ "$result" -eq 1 ] || fail 'WSL project accepted on the Windows filesystem'
 pass 'Scaffolder refuses the wrong platform, existing projects, unsafe names, guesses and /mnt in WSL'
+# The WSL guard judges the real location, not the spelling of the path.
+if [ -d /mnt ]; then
+  ln -s /mnt "$NP/winlink"
+  result=0; NP_KERNEL=wsl new_project --name vialink --parent "$NP/winlink" --environment linux > /dev/null 2>&1 || result=$?
+  [ "$result" -eq 1 ] || fail 'WSL project accepted through a symlink into /mnt'
+  rm -f -- "$NP/winlink"
+else
+  echo 'SKIP: no /mnt on this system; symlink case not exercised'
+fi
+result=0; NP_KERNEL=wsl new_project --name climbs --parent "$NP/not-yet/../../escape" --environment linux > /dev/null 2>&1 || result=$?
+[ "$result" -eq 1 ] && [ ! -e "$NP/not-yet" ] && [ ! -e "$TEST_ROOT/escape" ] || fail "WSL guard accepted '..' in a missing path"
+pass "Scaffolder resolves symlinks and refuses '..' before checking the WSL location"
+# A failure part-way through removes what the run created, so a rerun can start clean.
+mkdir -p "$TEST_ROOT/failgit"
+printf '#!/usr/bin/env bash\ncase "$1" in init) echo "fatal: simulated failure" >&2; exit 1 ;; esac\n' > "$TEST_ROOT/failgit/git"
+chmod +x "$TEST_ROOT/failgit/git"
+fail_project() {
+  env PATH="$TEST_ROOT/failgit:$PATH" DEVSETUP_KERNEL=Linux DEVSETUP_PROC_VERSION="$TEST_ROOT/os/native" \
+    bash "$ROOT/new-project.sh" "$@" < /dev/null
+}
+result=0; fail_project --name broken --parent "$NP" --environment linux > "$TEST_ROOT/np-broken.log" 2>&1 || result=$?
+[ "$result" -ne 0 ] && [ ! -e "$NP/broken" ] && grep -q 'removed the partial project' "$TEST_ROOT/np-broken.log" || fail 'failed scaffold left a partial project'
+mkdir -p "$NP/wasempty"
+result=0; fail_project --name wasempty --parent "$NP" --environment linux > /dev/null 2>&1 || result=$?
+[ "$result" -ne 0 ] && [ -d "$NP/wasempty" ] && [ -z "$(ls -A -- "$NP/wasempty")" ] || fail 'failed scaffold did not restore the empty target'
+pass 'A failed scaffold removes only what it created'
 NP_OS=Darwin new_project --name macapp --parent "$NP" --windows-native no --linux-target yes > /dev/null
 grep -q 'Canonical development environment: MACOS' "$NP/macapp/PROJECT-CHARTER.md" || fail 'macOS environment not recorded'
 grep -q 'container or Linux VM' "$NP/macapp/PROJECT-CHARTER.md" || fail 'macOS Linux-target reason not recorded'

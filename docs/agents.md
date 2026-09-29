@@ -46,15 +46,21 @@ production data or signing keys. For a read-only second-opinion pass, create
 `codex --profile review`.
 
 **Claude Code** (`~/.claude/settings.json`): no global allow rules, and deny rules
-that stop reading `.env`, `.pfx`/`.p12` files, `~/.gnupg` and `~/.ssh`. A `Read` deny
-also blocks editing the same path. Put build, test and project-script permissions in
+that stop Claude's file tools reading `.env` and `.env.*` files, `.pem`, `.key`,
+`.pfx` and `.p12` files, `~/.gnupg` and `~/.ssh`. A `Read` deny also blocks editing the
+same path. These rules are a safeguard against accidental reads, not an isolation
+boundary: a deny rule applies to the tool it names, so it does not stop every way of
+reading a file (a shell command, for example). Keep real secrets out of project folders
+where you can. `Read(**/.env.*)` also hides `.env.example`; remove that rule if you want
+the agent to read example files. Put build, test and project-script permissions in
 each repository's `.claude/settings.json` after reviewing that repository's side
 effects. If your settings file already exists, merge this block by hand:
 
 ```json
 {
   "permissions": {
-    "deny": ["Read(**/.env)", "Read(**/*.pfx)", "Read(**/*.p12)", "Read(~/.gnupg/**)", "Read(~/.ssh/**)"]
+    "deny": ["Read(**/.env)", "Read(**/.env.*)", "Read(**/*.pem)", "Read(**/*.key)",
+             "Read(**/*.pfx)", "Read(**/*.p12)", "Read(~/.gnupg/**)", "Read(~/.ssh/**)"]
   }
 }
 ```
@@ -118,7 +124,11 @@ for repository work.
 - **GitHub MCP** is optional. For Codex, run the bootstrap after `gh auth login`; it
   adds a server entry that reads the token from `GITHUB_MCP_PAT`, and you launch Codex
   through `helpers/codex-with-github-mcp.ps1` or `.sh`, which fetches the token from
-  GitHub CLI for that process only. Claude's documented GitHub MCP setup stores a
+  GitHub CLI and passes it to Codex in its environment instead of writing it to a file.
+  Codex and every command it runs can read that token, and it carries your full GitHub
+  CLI access (usually every repository you can reach, plus workflows if you granted that
+  scope). Use the helper only for sessions that need GitHub MCP; start Codex normally
+  otherwise. Claude's documented GitHub MCP setup stores a
   personal access token in its user-scoped configuration, so the toolkit never does it
   automatically. If you accept that, use a fine-grained token limited to the needed
   repositories and remove or rotate it when finished:

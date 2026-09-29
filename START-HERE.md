@@ -264,7 +264,8 @@ Windows does not sign in WSL. In VS Code, install **Claude Code** (publisher Ant
 and **Codex** (publisher OpenAI); the extension does not put the CLI on `PATH`.
 
 To apply this toolkit's conservative agent defaults (Codex asks before running
-commands; Claude cannot read `.env`, key or SSH files; Context7 documentation server),
+commands; Claude's file tools are denied `.env` files, common key files and the SSH and
+GPG folders, as a safeguard rather than a complete barrier; Context7 documentation server),
 rerun the bootstrap with `-ConfigureAgents` or `--configure-agents`. Existing settings
 files are never overwritten. [docs/agents.md](docs/agents.md) explains the choices,
 GitHub MCP, and how to keep one policy for both agents.

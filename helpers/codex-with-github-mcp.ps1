@@ -1,5 +1,6 @@
 # Start Codex with a GitHub MCP token taken from GitHub CLI's credential store.
-# The token is scoped to this process and its child process, not the user environment.
+# The token is set for this process and the Codex process only, not the user environment.
+# Codex and every command it runs inherit it, with the token's full GitHub CLI access.
 [CmdletBinding()]
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$CodexArgs)
 

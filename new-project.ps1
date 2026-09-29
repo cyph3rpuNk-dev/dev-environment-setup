@@ -144,27 +144,41 @@ function Write-FromTemplate ([string]$Template, [string]$Output, [hashtable]$Val
     [IO.File]::WriteAllText($Output, $text, $utf8NoBom)
 }
 
-$null = New-Item -ItemType Directory -Force -Path (Join-Path $target 'scripts')
-Write-FromTemplate 'README.md.template' (Join-Path $target 'README.md') @{ PROJECT_NAME = $Name; ENVIRONMENT = 'Windows'; GATE_COMMAND = $gate }
-Write-FromTemplate 'PROJECT-CHARTER.md.template' (Join-Path $target 'PROJECT-CHARTER.md') @{
-    PROJECT_NAME = $Name
-    'IDEA | PROTOTYPE | ACTIVE | MAINTENANCE' = 'IDEA'
-    'WINDOWS | LINUX | MACOS | WSL | UNDECIDED' = 'WINDOWS'
-    WHY_THIS_ENVIRONMENT = $reason
-    GATE_COMMAND = $gate
-}
-Write-FromTemplate 'AGENTS.md.template' (Join-Path $target 'AGENTS.md') @{ PROJECT_NAME = $Name; GATE_COMMAND = $gate }
-if (-not $NoClaude) { Write-FromTemplate 'CLAUDE.md.template' (Join-Path $target 'CLAUDE.md') @{} }
-Write-FromTemplate 'check.ps1.template' (Join-Path (Join-Path $target 'scripts') 'check.ps1') $commands
-Write-FromTemplate 'gitattributes.template' (Join-Path $target '.gitattributes') @{}
-Write-FromTemplate 'gitignore.template' (Join-Path $target '.gitignore') @{}
-if ($ignoreExtra) { [IO.File]::AppendAllText((Join-Path $target '.gitignore'), $ignoreExtra, $utf8NoBom) }
-Write-FromTemplate 'editorconfig.template' (Join-Path $target '.editorconfig') @{}
+# If anything below fails, remove what this run created so a rerun can start clean.
+# The target is ours: it did not exist, or it was an empty directory, before this point.
+$targetExisted = Test-Path -LiteralPath $target
+try {
+    $null = New-Item -ItemType Directory -Force -Path (Join-Path $target 'scripts')
+    Write-FromTemplate 'README.md.template' (Join-Path $target 'README.md') @{ PROJECT_NAME = $Name; ENVIRONMENT = 'Windows'; GATE_COMMAND = $gate }
+    Write-FromTemplate 'PROJECT-CHARTER.md.template' (Join-Path $target 'PROJECT-CHARTER.md') @{
+        PROJECT_NAME = $Name
+        'IDEA | PROTOTYPE | ACTIVE | MAINTENANCE' = 'IDEA'
+        'WINDOWS | LINUX | MACOS | WSL | UNDECIDED' = 'WINDOWS'
+        WHY_THIS_ENVIRONMENT = $reason
+        GATE_COMMAND = $gate
+    }
+    Write-FromTemplate 'AGENTS.md.template' (Join-Path $target 'AGENTS.md') @{ PROJECT_NAME = $Name; GATE_COMMAND = $gate }
+    if (-not $NoClaude) { Write-FromTemplate 'CLAUDE.md.template' (Join-Path $target 'CLAUDE.md') @{} }
+    Write-FromTemplate 'check.ps1.template' (Join-Path (Join-Path $target 'scripts') 'check.ps1') $commands
+    Write-FromTemplate 'gitattributes.template' (Join-Path $target '.gitattributes') @{}
+    Write-FromTemplate 'gitignore.template' (Join-Path $target '.gitignore') @{}
+    if ($ignoreExtra) { [IO.File]::AppendAllText((Join-Path $target '.gitignore'), $ignoreExtra, $utf8NoBom) }
+    Write-FromTemplate 'editorconfig.template' (Join-Path $target '.editorconfig') @{}
 
-git init --quiet -- $target
-if ($LASTEXITCODE -ne 0) { Stop-NewProject "git init failed in $target" }
-git -C $target symbolic-ref HEAD refs/heads/main
-if ($LASTEXITCODE -ne 0) { Stop-NewProject "could not set the initial branch to main in $target" }
+    git init --quiet -- $target
+    if ($LASTEXITCODE -ne 0) { throw "git init failed in $target" }
+    git -C $target symbolic-ref HEAD refs/heads/main
+    if ($LASTEXITCODE -ne 0) { throw "could not set the initial branch to main in $target" }
+}
+catch {
+    if ($targetExisted) {
+        Get-ChildItem -LiteralPath $target -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    elseif (Test-Path -LiteralPath $target) {
+        Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Stop-NewProject "setup failed ($_); removed the partial project at $target"
+}
 
 Write-Host ''
 Write-Host "Created $target"

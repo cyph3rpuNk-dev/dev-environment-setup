@@ -6,6 +6,6 @@ Do not describe features here until they exist.
 ## Development
 
 - Environment: {{ENVIRONMENT}}
-- Local gate: `{{GATE_COMMAND}}` (CI runs the same gate)
+- Local gate: `{{GATE_COMMAND}}`. When you add CI, make it run this same gate.
 
 Agent instructions live in `AGENTS.md`.

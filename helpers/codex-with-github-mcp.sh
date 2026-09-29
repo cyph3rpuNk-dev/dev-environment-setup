@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Start Codex with a GitHub MCP token taken from GitHub CLI's credential store.
-# The token is exported only to this child process, never to ~/.bashrc.
+# The token is exported to this process only, never to ~/.bashrc. Codex and every
+# command it runs inherit it, with the token's full GitHub CLI access.
 set -euo pipefail
 
 if ! command -v gh >/dev/null 2>&1; then
