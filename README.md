@@ -77,12 +77,23 @@ The scaffolder asks whether the project is a native Windows program and whether 
 targets Linux, recommends where it belongs and says why. If you run it on the wrong
 side, it creates nothing and prints the command for the right one.
 
-## Let an AI assistant guide you
+## Let a coding agent set it up
 
-New to this? Give [GUIDED-SETUP.md](GUIDED-SETUP.md) to an AI assistant such as Claude
-or ChatGPT. It asks what you want to build, recommends where to build it and why, and
-walks you through these commands one step at a time, including bringing an existing
-project into order. The file begins with the exact prompt to use.
+New to this? Let a coding agent do the work. You need **Claude Code or Codex**; install
+one from its official page (commands in [START-HERE.md](START-HERE.md), Step 7), start it
+in your home folder, and send:
+
+> Clone https://github.com/cyph3rpuNk-dev/dev-environment-setup into my home folder if
+> it is not there yet, then follow its GUIDED-SETUP.md. Ask me before running any
+> command.
+
+It asks what you want to build, recommends where to build it and why, sets up your
+computer, and creates the project; it can also bring an existing project into order.
+It asks before each step that installs something, needs your password or changes
+GitHub, and hands you the steps only you can do, such as typing your password or
+signing in in your browser. [GUIDED-SETUP.md](GUIDED-SETUP.md) holds its instructions.
+Tested so far with Claude Code; Codex reads the same instructions but has not been
+tested yet.
 
 ## What it never does
 
@@ -98,7 +109,7 @@ project into order. The file begins with the exact prompt to use.
 | Path | Purpose |
 |---|---|
 | [START-HERE.md](START-HERE.md) | Guided machine setup for Windows, macOS, Linux, and Windows + WSL |
-| [GUIDED-SETUP.md](GUIDED-SETUP.md) | Instructions that let an AI assistant interview you and guide the whole setup |
+| [GUIDED-SETUP.md](GUIDED-SETUP.md) | Instructions that let a coding agent (Claude Code or Codex) interview you and do the setup |
 | [NEW-PROJECT.md](NEW-PROJECT.md) | Turning an idea into a repository; what the scaffolder creates and what you still decide |
 | `bootstrap-windows.ps1`, `bootstrap-linux.sh` | Rerunnable setup with `-Check`/`--check` and `-Doctor`/`--doctor` modes; the Linux script also handles macOS |
 | `bootstrap-macos.sh` | macOS entry point; runs `bootstrap-linux.sh` |

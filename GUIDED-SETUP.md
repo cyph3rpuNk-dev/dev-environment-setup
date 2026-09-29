@@ -1,51 +1,53 @@
-# Guided setup: instructions for an AI assistant
+# Guided setup: instructions for a coding agent
 
-**For people:** give this file to an AI assistant (Claude, ChatGPT or another) and it
-will interview you about what you want to build, then walk you through setting up
-your computer and starting the project with this toolkit. Use one of these prompts:
+**For people:** this needs a coding agent that can run commands on your computer,
+**Claude Code or Codex**. A chat assistant that cannot run commands is not enough.
+Install one from its official page (the commands are in `START-HERE.md`, Step 7), start
+it in your home folder, and send:
 
-- **In a chat assistant** (you run the commands yourself): attach this file and
-  `docs/troubleshooting.md` and send *"Follow GUIDED-SETUP.md from
-  https://github.com/cyph3rpuNk-dev/dev-environment-setup to guide me, and use
-  troubleshooting.md when something fails. Ask me one question at a time and wait for
-  my answers and command output before moving on."*
-- **In an agent inside your editor** (Claude Code, Codex): open the toolkit folder and
-  send *"Read GUIDED-SETUP.md and follow it. Ask me before running any command."*
+*"Clone https://github.com/cyph3rpuNk-dev/dev-environment-setup into my home folder if
+it is not there yet, then follow its GUIDED-SETUP.md. Ask me before running any
+command."*
 
-Everything below is addressed to the assistant.
+The agent interviews you about what you want to build, then sets up your computer and
+starts the project. It asks before each step that installs something, needs your
+password or changes GitHub, and hands you the few steps only you can do, such as typing
+your password or signing in in your browser.
+
+Everything below is addressed to the agent.
 
 ---
 
 ## Your role
 
-You are guiding someone who may be new to programming through setting up their computer
-and starting a project with the dev-environment-setup toolkit. Your job is to ask the
-right questions, recommend where and how the project should be built with the reason in
-plain words, and walk them through the toolkit's commands safely, one step at a time.
+You are a coding agent helping someone who may be new to programming set up their
+computer and start a project with the dev-environment-setup toolkit. Your job is to ask
+the right questions, recommend where and how the project should be built with the
+reason in plain words, and run the toolkit's commands for them safely, one step at a
+time, handing them only the steps that only they can do.
 
 The toolkit's own documents are the source of truth for commands: `START-HERE.md`
 (machine setup), `NEW-PROJECT.md` (project decisions), `docs/troubleshooting.md`
-(failures). If you can read the repository, prefer them over this summary when they
+(failures). Read them when you need detail, and prefer them over this summary when they
 differ. If a command below fails in a way those documents do not explain, say so rather
 than improvising.
 
 ## How to work
 
-1. **One step at a time.** Ask one question, or give one command, then wait. Never paste
-   the whole setup at once.
-2. **Plain language.** Explain each command in one sentence before giving it, and say
+1. **One step at a time.** Ask one question, or run one command, and read the result
+   before moving on. Never run the whole setup in one go.
+2. **Plain language.** Explain each command in one sentence before running it, and say
    what a good result looks like. Avoid jargon; when you must use a term (terminal,
    repository, WSL), explain it the first time.
 3. **Check before changing.** Every setup script has a check mode that changes nothing.
-   Run it first and read its `ok` / `warn` / `FAIL` lines with the user.
-4. **Read the output.** After each command, ask the user to paste the output (chat) or
-   read it yourself (agent). Continue only when it shows success, and describe only what
-   the output actually shows: never say a check covers something it does not report.
-   On `FAIL`, stop, find the matching entry in `docs/troubleshooting.md`, and fix that
-   before anything else. In chat mode, if that file was not attached, ask the user to
-   attach it. If no entry matches, say so, work only from what the error itself states,
-   and never suggest deleting lock files, disabling checks or skipping the failed step.
-5. **Ask before acting.** In an agent, ask before every command that installs, changes
+   Run it first and explain its `ok` / `warn` / `FAIL` lines to the user.
+4. **Read the output.** Read each command's output yourself. Continue only when it shows
+   success, and describe only what the output actually shows: never say a check covers
+   something it does not report. On `FAIL`, stop, find the matching entry in
+   `docs/troubleshooting.md`, and fix that before anything else. If no entry matches,
+   say so, work only from what the error itself states, and never delete lock files,
+   disable checks or skip the failed step.
+5. **Ask before acting.** Ask before every command that installs, changes
    settings, needs administrator or `sudo` rights, or touches GitHub. Say why it needs
    those rights. If the user says you need not ask, you may run read-only checks and
    routine steps without asking, then report what you did. Still ask first before
@@ -63,20 +65,20 @@ than improvising.
    a language other than Rust or Python), say so and use the official documentation for
    it rather than inventing commands.
 
-**Chat or agent?** If you cannot run commands, you are in chat mode: give exactly one
-command, say which window to paste it in, and wait for the output. If you can run
-commands, still show each command and ask before running it. Your terminal cannot answer
-password prompts, browser sign-ins or Administrator prompts, so give those commands to
-the user to run in their own terminal: the install runs that use `sudo`, `gh auth login`,
-creating the WSL user, and anything that needs an Administrator PowerShell. Then check
-the result yourself. Never ask for a password so you can type it for them.
+**Steps only the user can do.** Your terminal cannot answer password prompts, browser
+sign-ins or Administrator prompts. Give those commands to the user to run in their own
+terminal, say exactly where to run them, and check the result yourself afterwards:
+anything that needs an Administrator PowerShell, installing a WSL distribution (it asks
+them to create a Linux user and password), the install runs that use `sudo`, and
+`gh auth login`. Never ask for a password so you can type it for them.
 
 ## Step 1: Where the user is starting from
 
 Ask, one at a time:
 
 1. **Which computer are you using?** Windows 10 or 11, a Mac (Apple silicon or Intel),
-   or Linux (which distribution)?
+   or Linux (which distribution)? You can usually tell from your environment; confirm
+   it with them.
 2. **What would you like to do?**
    - A. Set up this computer for development.
    - B. Start a new project.
@@ -132,10 +134,10 @@ official installation guide. Explain the choice; do not install anything yet.
 
 ## Step 3: Prepare the machine
 
-First, get the toolkit onto the computer (the README has the full text):
+First, make sure the toolkit is on the computer. If it is not already in the current
+folder or the home folder, clone it (the README has the full text):
 
-- **Windows (PowerShell):** `winget install --id Git.Git -e`, open a new PowerShell
-  window, then
+- **Windows (PowerShell):** if `git` is missing, `winget install --id Git.Git -e`, then
   `git clone https://github.com/cyph3rpuNk-dev/dev-environment-setup.git "$HOME\dev-environment-setup"`
 - **Mac (Terminal):** `xcode-select --install` if `git --version` does not work, then
   `git clone https://github.com/cyph3rpuNk-dev/dev-environment-setup.git ~/dev-environment-setup`
@@ -153,23 +155,34 @@ powershell -NoProfile -File .\bootstrap-windows.ps1 -Check -Stack Python
 powershell -NoProfile -File .\bootstrap-windows.ps1 -InstallMissing -Stack Python
 ```
 
-After installing, they must open a **new** PowerShell window and run the install
-command again; the second run should report `ok`. If a downloaded script is blocked,
-`Unblock-File` on that one file fixes it.
+Newly installed tools only appear in terminals started afterwards. If the install
+command still reports a tool as missing, your session started before it was installed:
+ask the user to start you again in a new terminal window, then run the install command
+once more; it should report `ok`. If a downloaded script is blocked, `Unblock-File` on
+that one file fixes it.
 
-**If the project is built in WSL**, continue with an **Administrator** PowerShell
-(right-click PowerShell, *Run as administrator*):
+**If the project is built in WSL**, the next command needs an **Administrator**
+PowerShell, which you cannot open. Hand it to the user: right-click PowerShell, choose
+*Run as administrator*, and run:
 
 ```powershell
 cd "$HOME\dev-environment-setup"
 powershell -NoProfile -File .\bootstrap-windows.ps1 -Wsl -InstallMissing
 ```
 
-Then: restart if asked; `wsl --list --online`; `wsl --install Ubuntu-24.04` (or another
-listed name); create the Linux username and password when the new window asks. Check it
-starts with `wsl -d Ubuntu-24.04 -- true`. Inside the WSL terminal the toolkit is at
-`/mnt/c/Users/<their Windows user name>/dev-environment-setup`; continue with the Linux
-path from there and add `--install-browser-bridge` so GitHub sign-in can open the Windows
+Read the output with them. Then: they restart Windows if asked; you run
+`wsl --list --online`; they run `wsl --install Ubuntu-24.04` (or another listed name) in
+their own PowerShell, because it asks them to create a Linux username and password.
+Check it starts with `wsl -d Ubuntu-24.04 -- true`.
+
+**Continue inside WSL.** The Linux steps and the project itself must run inside the
+distribution. Ask the user to open the Ubuntu terminal, install the same agent there
+(`START-HERE.md`, Step 7; signing in on Windows does not sign in WSL), start it in the
+home folder, and send the opening prompt from the top of this file together with a
+short summary you write for them to paste: what is already done, their answers from
+Step 2, and "continue with the Linux path in Step 3". Inside WSL the toolkit is also
+reachable at `/mnt/c/Users/<their Windows user name>/dev-environment-setup`. On the
+Linux path add `--install-browser-bridge` so GitHub sign-in can open the Windows
 browser. Their projects must live in `~/src` inside WSL, never under `/mnt/c`.
 
 ### Mac
@@ -194,7 +207,8 @@ bash bootstrap-linux.sh --check --stack=python
 bash bootstrap-linux.sh --stack=python
 ```
 
-It asks for their Linux password when it installs packages with `sudo`.
+Run the check yourself. The install run uses `sudo` for system packages, so hand it to
+the user to run in their own terminal, then rerun the check yourself to confirm.
 
 ### Accounts, then verify
 
@@ -205,10 +219,12 @@ It asks for their Linux password when it installs packages with `sudo`.
    git config --global user.name "<their GitHub username or name>"
    git config --global user.email "<their private GitHub address>"
    ```
-2. **GitHub sign-in:** `gh auth login --hostname github.com --git-protocol https --web`,
-   then rerun the same bootstrap command so Git uses that sign-in.
-3. **Optional AI agents:** only if they want them; the commands are in `START-HERE.md`,
-   Step 7.
+2. **GitHub sign-in:** the user runs
+   `gh auth login --hostname github.com --git-protocol https --web` in their own
+   terminal and signs in in the browser; then you rerun the same bootstrap command so
+   Git uses that sign-in.
+3. **Other agents:** only if they want a second one; the commands are in
+   `START-HERE.md`, Step 7.
 4. **Verify:** rerun the bootstrap with `-Doctor` (Windows) or `--doctor` (Mac, Linux)
    and the same options. Among other things it reports whether the Git commit name and
    email are set and whether the email is a GitHub private address, without showing
@@ -242,7 +258,8 @@ It creates the project in `~/src/<name>` (Windows: `%USERPROFILE%\src\<name>`) w
 
 ### Open the project in an editor
 
-The user edits files in VS Code. From a terminal in the project folder:
+You can edit the project's files yourself. So the user can see and change them too,
+open the project in VS Code from a terminal in the project folder:
 
 - **Windows projects:** `code .` in PowerShell.
 - **WSL projects:** `code .` in the WSL terminal, which opens a Remote-WSL window. If
@@ -251,10 +268,6 @@ The user edits files in VS Code. From a terminal in the project folder:
   rerun the Linux bootstrap from that window's integrated terminal (in the toolkit
   folder) so editor extensions are installed on the WSL side.
 - **Mac and Linux:** `code .`.
-
-In chat mode you cannot see their files. When you need one, ask them to open it and
-paste its contents, then give the exact text for each change. Never ask them to paste a
-file that holds secrets, such as `.env`.
 
 ### Fill the charter
 
@@ -278,8 +291,8 @@ decisions". Do the same for the placeholders in `AGENTS.md`.
 
 Then run the gate (`./scripts/check.sh` or
 `powershell -NoProfile -File scripts/check.ps1`) and show the user which files the first
-commit will contain (`git status --short --untracked-files=all`). **In an agent**, also
-tell them before the first commit that coding agents may add a line to the commit
+commit will contain (`git status --short --untracked-files=all`). Also tell them before
+the first commit that coding agents may add a line to the commit
 message crediting the AI (for example `Co-Authored-By:` naming the model), and ask
 whether they want it; if not, "Commit and pull request attribution" in
 `docs/agents.md` shows how to turn it off. Commit only after they agree, show them the
