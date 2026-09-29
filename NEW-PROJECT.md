@@ -6,7 +6,7 @@ The development-environment folder remains outside the new repository. Copy only
 
 ## Fast path: the scaffolder
 
-`new-project.ps1` (Windows) and `new-project.sh` (Linux or WSL) perform sections 1, 2
+`new-project.ps1` (Windows) and `new-project.sh` (macOS, Linux or WSL) perform sections 1, 2
 and the mechanical part of 5 below:
 
 ```powershell
@@ -60,7 +60,10 @@ Use one primary environment per project.
 
 On a Linux machine, "Linux" simply means the machine itself. On a Windows machine it
 means a WSL distribution (`bootstrap-windows.ps1 -Wsl`, see START-HERE.md Part 1,
-Step 3). Do not keep an active Linux checkout under `/mnt/c`; store it under `~/src`
+Step 3). On a Mac, Linux-targeted projects are developed natively, because macOS is
+Unix-like; use a container or Linux virtual machine for anything that needs Linux
+itself. A native Windows program cannot be built on a Mac; use a Windows PC or a
+Windows virtual machine. Do not keep an active Linux checkout under `/mnt/c`; store it under `~/src`
 inside WSL. Do not build a Windows-native project from WSL merely because WSL is
 available.
 

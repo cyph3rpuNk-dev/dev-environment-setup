@@ -9,6 +9,8 @@ profile's user settings (**Preferences: Open User Settings (JSON)**):
 | `General · Linux` | Linux projects, on native Linux or in a Remote-WSL window | `General-Linux.settings.jsonc` |
 | `Rust · Windows` | Windows-native Rust | `Rust-Windows.settings.jsonc` |
 | `Rust · Linux` | Linux Rust, native or WSL | `Rust-Linux.settings.jsonc` |
+| `General · macOS` | Projects developed on a Mac | `General-macOS.settings.jsonc` |
+| `Rust · macOS` | Rust on a Mac | `Rust-macOS.settings.jsonc` |
 
 Earlier versions called the Linux profiles `General · WSL` and `Rust · WSL`; the
 settings are the same, so existing profiles need no change.

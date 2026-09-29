@@ -13,7 +13,7 @@ security invariant, destructive command, release process, or production credenti
 | `foundation/PROJECT-CHARTER.md.template` | `PROJECT-CHARTER.md` | every `{{...}}`; keep unknowns under Open decisions |
 | `foundation/AGENTS.md.template` | `AGENTS.md` | purpose, verified invariants, prohibitions, boundaries |
 | `foundation/CLAUDE.md.template` | `CLAUDE.md` (only if Claude Code is used) | nothing; add Claude-only notes below the import |
-| `foundation/check.sh.template` | `scripts/check.sh` (Linux/WSL) | `{{FORMAT_COMMAND}}`, `{{LINT_COMMAND}}`, `{{TEST_COMMAND}}` |
+| `foundation/check.sh.template` | `scripts/check.sh` (macOS, Linux, WSL) | `{{FORMAT_COMMAND}}`, `{{LINT_COMMAND}}`, `{{TEST_COMMAND}}` |
 | `foundation/check.ps1.template` | `scripts/check.ps1` (Windows) | the same three commands |
 | `foundation/README.md.template` | `README.md` | name, environment, gate command |
 | `foundation/gitattributes.template` | `.gitattributes` | nothing |

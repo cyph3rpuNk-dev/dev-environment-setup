@@ -10,6 +10,8 @@ Pick your path:
 |---|---|---|
 | Windows | Windows programs, or no Linux requirement | Part 1, then Part 3 |
 | Linux | anything | Part 2, then Part 3 |
+| Mac | anything that runs on macOS or Linux (web, Python, Rust, containers) | Part 2b, then Part 3 |
+| Mac | a native Windows program | a Windows PC or Windows virtual machine, then Part 1 |
 | Windows | runs on or deploys to Linux (web server, WordPress/PHP, containers, Linux tools) | Part 1, Part 2 inside WSL, then Part 3 |
 
 Not sure which kind of project you have? `new-project.ps1` and `new-project.sh` ask two
@@ -167,6 +169,45 @@ export BROWSER=/usr/local/bin/wslview      # or open a new login shell
 
 ---
 
+# Part 2b: macOS
+
+## Step 4b: Command Line Tools and Homebrew
+
+Apple's Command Line Tools provide Git and the compilers everything else needs, and
+[Homebrew](https://brew.sh) installs the remaining tools. If they are missing, the
+bootstrap stops and prints the official commands. Install them yourself; both ask for
+your Mac password and may open a system dialog:
+
+```bash
+xcode-select --install
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+When the installer finishes, its **Next steps** section lists the commands that add
+Homebrew to your `PATH`. Run them, then open a new terminal. The bootstrap still finds
+Homebrew if you skip this, and warns you until it is on your `PATH`.
+
+## Step 4c: check, then install
+
+```bash
+cd ~/dev-environment-setup
+bash bootstrap-macos.sh --check
+bash bootstrap-macos.sh
+```
+
+This installs Git and GitHub CLI with Homebrew (no `sudo`), VS Code if it is missing,
+and the general VS Code extensions. Add `--stack=rust`, `--stack=python` or
+`--stack=rust,python` as needed. Run it a second time; the second run should mostly
+report `ok`.
+
+**Linux-targeted projects on a Mac.** macOS is Unix-like, so most web, Python and Rust
+work runs natively. When a project needs Linux itself (Linux-only packages, systemd,
+matching a Linux server exactly), use a container tool or a Linux virtual machine for
+those parts. The toolkit does not choose one for you: Docker Desktop has licence terms
+for larger companies, and OrbStack, Colima and UTM are common alternatives.
+
+---
+
 # Part 3: every machine
 
 Windows and each WSL distribution are separate environments. Do the steps below once
@@ -208,7 +249,7 @@ Install each agent in every environment where you will use it. Commands below we
 checked against the official pages on 28 September 2026; if they differ now, follow
 the official page.
 
-| Agent | Windows PowerShell | Linux and WSL | Official page |
+| Agent | Windows PowerShell | macOS, Linux and WSL | Official page |
 |---|---|---|---|
 | Claude Code | `irm https://claude.ai/install.ps1 \| iex` | `curl -fsSL https://claude.ai/install.sh \| bash` | <https://code.claude.com/docs/en/setup> |
 | Codex CLI | `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"` | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` | <https://github.com/openai/codex> |
@@ -228,7 +269,8 @@ GitHub MCP, and how to keep one policy for both agents.
 
 Create only the VS Code profiles you need and paste the matching settings template
 from [profiles/](profiles/README.md): `General · Windows`, `General · Linux` (for WSL
-windows and native Linux), and the Rust variants if you selected Rust.
+windows and native Linux), `General · macOS`, and the Rust variants if you selected
+Rust.
 
 ## Step 9: verify
 
@@ -237,7 +279,8 @@ powershell -NoProfile -File .\bootstrap-windows.ps1 -Doctor      # plus the same
 ```
 
 ```bash
-bash bootstrap-linux.sh --doctor                                   # plus the same --stack/--configure-agents
+bash bootstrap-linux.sh --doctor                                   # Linux or WSL, plus the same --stack/--configure-agents
+bash bootstrap-macos.sh --doctor                                   # macOS, plus the same options
 ```
 
 Doctor modes never install or write configuration; the Windows doctor may start your
@@ -251,6 +294,7 @@ that every optional feature is ready: read the warnings and the manual checks in
 - Doctor reports no unexplained failures in each environment you use.
 - With Rust on Windows: the linker probe passed.
 - With WSL: `wsl -d <Name> -- true` succeeds, and Linux projects will live under `~/src`.
+- On macOS: Homebrew works in a new terminal, and with Rust the Command Line Tools are installed.
 - Git identity set and `gh auth status` succeeds wherever you will push.
 - Agents, if used, report a version and are signed in on each side.
 - No token, key or personal profile has been committed anywhere.
@@ -260,7 +304,7 @@ existing project's failing baseline before adding new tooling.
 
 ## Next: start or join a project
 
-- New project: `new-project.ps1` (Windows) or `new-project.sh` (Linux/WSL), then
+- New project: `new-project.ps1` (Windows) or `new-project.sh` (macOS, Linux or WSL), then
   [NEW-PROJECT.md](NEW-PROJECT.md).
 - Existing project: clone it on the side its README requires, run its own gate first,
   and record pre-existing failures before changing anything.

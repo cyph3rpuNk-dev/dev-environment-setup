@@ -6,6 +6,9 @@
 #   bash new-project.sh --name my-tool --windows-native no --linux-target yes
 #   bash new-project.sh --name my-tool --environment linux --stack python
 #
+# Runs on Linux, in WSL and on macOS. "linux" means a Linux-targeted project, which
+# on a Mac is developed natively with containers or a VM for Linux-only parts.
+#
 # Options:
 #   --name NAME                 repository directory name (letters, digits, . _ -)
 #   --parent DIR                where to create it (default: ~/src)
@@ -94,13 +97,14 @@ if [ -z "$ENVIRONMENT" ]; then
   esac
 fi
 
+KERNEL=${DEVSETUP_KERNEL:-$(uname -s 2>/dev/null)}
 PROC_VERSION=${DEVSETUP_PROC_VERSION:-/proc/version}
 IS_WSL=0
-if grep -qi microsoft "$PROC_VERSION" 2>/dev/null; then IS_WSL=1; fi
+if [ "$KERNEL" != Darwin ] && grep -qi microsoft "$PROC_VERSION" 2>/dev/null; then IS_WSL=1; fi
 
 if [ "$ENVIRONMENT" = windows ]; then
   echo "Recommended environment: native Windows, because $REASON."
-  echo "Create it from PowerShell on Windows instead:"
+  echo "Create it from PowerShell on a Windows PC or Windows virtual machine instead:"
   echo "  powershell -NoProfile -File .\\new-project.ps1 -Name $NAME -Environment Windows"
   echo "Nothing was created."
   exit 3
@@ -122,7 +126,11 @@ for f in PROJECT-CHARTER.md.template AGENTS.md.template CLAUDE.md.template check
   [ -f "$TEMPLATES/$f" ] || die "toolkit template missing: $TEMPLATES/$f"
 done
 
-if [ "$IS_WSL" = 1 ]; then ENV_LABEL=WSL; ENV_TEXT="Linux (WSL)"; else ENV_LABEL=LINUX; ENV_TEXT="Linux"; fi
+if [ "$KERNEL" = Darwin ]; then
+  ENV_LABEL=MACOS; ENV_TEXT="macOS"
+  case "$LINUX_TARGET" in yes) REASON="$REASON; on this Mac it is developed natively, with a container or Linux VM for anything Linux-only" ;; esac
+elif [ "$IS_WSL" = 1 ]; then ENV_LABEL=WSL; ENV_TEXT="Linux (WSL)"
+else ENV_LABEL=LINUX; ENV_TEXT="Linux"; fi
 GATE="./scripts/check.sh"
 
 case "$STACK" in
@@ -139,16 +147,20 @@ case "$STACK" in
   *) FORMAT='' LINT='' TEST='' IGNORE_EXTRA='' ;;
 esac
 
-# Replace {{KEY}} literally. Quoted replacements keep '&' and '/' literal.
+# Replace {{KEY}} with VALUE literally. awk reads both through the environment, so
+# '&', '/' and backslashes stay literal, and the result is the same in Bash 3.2
+# (macOS) and newer versions.
 render() { # render TEMPLATE OUTPUT KEY VALUE ...
-  local text key value
-  text=$(cat -- "$TEMPLATES/$1") || return 1
-  local out="$2"; shift 2
+  local out="$2"
+  cp -- "$TEMPLATES/$1" "$out" || return 1
+  shift 2
   while [ "$#" -ge 2 ]; do
-    key="{{$1}}"; value="$2"; shift 2
-    text=${text//"$key"/"$value"}
+    RENDER_KEY="{{$1}}" RENDER_VALUE="$2" awk '
+      { line = $0; result = ""; key = ENVIRON["RENDER_KEY"]; value = ENVIRON["RENDER_VALUE"]
+        while ((i = index(line, key)) > 0) { result = result substr(line, 1, i - 1) value; line = substr(line, i + length(key)) }
+        print result line }' "$out" > "$out.tmp" && mv -- "$out.tmp" "$out" || return 1
+    shift 2
   done
-  printf '%s\n' "$text" > "$out"
 }
 
 set -e
@@ -157,7 +169,7 @@ render README.md.template "$TARGET/README.md" PROJECT_NAME "$NAME" ENVIRONMENT "
 render PROJECT-CHARTER.md.template "$TARGET/PROJECT-CHARTER.md" \
   PROJECT_NAME "$NAME" \
   'IDEA | PROTOTYPE | ACTIVE | MAINTENANCE' IDEA \
-  'WINDOWS | LINUX | WSL | UNDECIDED' "$ENV_LABEL" \
+  'WINDOWS | LINUX | MACOS | WSL | UNDECIDED' "$ENV_LABEL" \
   WHY_THIS_ENVIRONMENT "$REASON" \
   GATE_COMMAND "$GATE"
 render AGENTS.md.template "$TARGET/AGENTS.md" PROJECT_NAME "$NAME" GATE_COMMAND "$GATE"

@@ -149,7 +149,7 @@ Write-FromTemplate 'README.md.template' (Join-Path $target 'README.md') @{ PROJE
 Write-FromTemplate 'PROJECT-CHARTER.md.template' (Join-Path $target 'PROJECT-CHARTER.md') @{
     PROJECT_NAME = $Name
     'IDEA | PROTOTYPE | ACTIVE | MAINTENANCE' = 'IDEA'
-    'WINDOWS | LINUX | WSL | UNDECIDED' = 'WINDOWS'
+    'WINDOWS | LINUX | MACOS | WSL | UNDECIDED' = 'WINDOWS'
     WHY_THIS_ENVIRONMENT = $reason
     GATE_COMMAND = $gate
 }

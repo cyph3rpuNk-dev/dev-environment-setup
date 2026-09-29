@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# bootstrap-linux.sh : project-neutral Linux development tools
-# Runs on native Linux and inside WSL. Supports Fedora/RHEL (dnf) and
-# Debian/Ubuntu (apt). Safe to run more than once.
+# bootstrap-linux.sh : project-neutral Linux and macOS development tools
+# Runs on native Linux, inside WSL and on macOS. Supports Fedora/RHEL (dnf),
+# Debian/Ubuntu (apt) and macOS (Homebrew). Safe to run more than once.
 #
 #   bash bootstrap-linux.sh                    # base tools and general extensions
 #   bash bootstrap-linux.sh --check            # report only, change nothing
 #   bash bootstrap-linux.sh --doctor           # check plus environment diagnostics
 #   bash bootstrap-linux.sh --stack=rust,python  # add optional stacks
 #   bash bootstrap-linux.sh --configure-agents # create missing agent defaults and MCP config
-#   bash bootstrap-linux.sh --no-sudo          # never use sudo; report missing packages
+#   bash bootstrap-linux.sh --no-sudo          # install no packages; report missing ones
 #   bash bootstrap-linux.sh --install-browser-bridge
 #                                              # WSL only: open sign-in URLs in Windows
 #
@@ -29,6 +29,8 @@ WANT_RUST=0
 WANT_PYTHON=0
 add_stacks() {
   local list="$1" s
+  # An empty list would be an empty array, which Bash 3.2 (macOS) rejects under set -u.
+  [ -n "$list" ] || { echo "empty --stack= (choose base, rust, python)" >&2; exit 1; }
   IFS=',' read -r -a _stacks <<< "$list"
   for s in "${_stacks[@]}"; do
     case "$s" in
@@ -53,22 +55,31 @@ for arg in "$@"; do
 done
 
 # Platform detection reads files only. The overrides exist for the offline tests.
+KERNEL=${DEVSETUP_KERNEL:-$(uname -s 2>/dev/null)}
 PROC_VERSION=${DEVSETUP_PROC_VERSION:-/proc/version}
 OS_RELEASE=${DEVSETUP_OS_RELEASE:-/etc/os-release}
 IS_WSL=0
-if grep -qi microsoft "$PROC_VERSION" 2>/dev/null; then IS_WSL=1; fi
+IS_MACOS=0
 os_field() { sed -n "s/^$1=//p" "$OS_RELEASE" 2>/dev/null | head -n 1 | tr -d "\"'"; }
-DISTRO_ID=$(os_field ID)
-DISTRO_LIKE=$(os_field ID_LIKE)
-DISTRO_NAME=$(os_field PRETTY_NAME)
-case " $DISTRO_ID $DISTRO_LIKE " in
-  *" fedora "*|*" rhel "*|*" centos "*) PKG_MGR=dnf ;;
-  *" debian "*|*" ubuntu "*) PKG_MGR=apt ;;
-  *) PKG_MGR=none ;;
-esac
+DISTRO_ID=""
+if [ "$KERNEL" = Darwin ]; then
+  IS_MACOS=1
+  PKG_MGR=brew
+  DISTRO_NAME="macOS $(sw_vers -productVersion 2>/dev/null)"
+else
+  if grep -qi microsoft "$PROC_VERSION" 2>/dev/null; then IS_WSL=1; fi
+  DISTRO_ID=$(os_field ID)
+  DISTRO_LIKE=$(os_field ID_LIKE)
+  DISTRO_NAME=$(os_field PRETTY_NAME)
+  case " $DISTRO_ID $DISTRO_LIKE " in
+    *" fedora "*|*" rhel "*|*" centos "*) PKG_MGR=dnf ;;
+    *" debian "*|*" ubuntu "*) PKG_MGR=apt ;;
+    *) PKG_MGR=none ;;
+  esac
+fi
 
 if [ "$INSTALL_BROWSER_BRIDGE" = 1 ] && [ "$IS_WSL" = 0 ]; then
-  echo '--install-browser-bridge is only for WSL; native Linux already has a browser.' >&2
+  echo '--install-browser-bridge is only for WSL; native Linux and macOS already have a browser.' >&2
   exit 2
 fi
 if [ "$NO_SUDO" = 1 ] && [ "$INSTALL_BROWSER_BRIDGE" = 1 ]; then
@@ -95,27 +106,62 @@ run_downloaded_installer() {
   rm -f -- "$installer"; return 1
 }
 
+# On Apple silicon Homebrew lives in /opt/homebrew, which a new shell only finds
+# after its profile is set up. Use it for this run and say how to make it permanent.
+if [ "$IS_MACOS" = 1 ] && ! have brew; then
+  for candidate in ${DEVSETUP_BREW_CANDIDATES:-/opt/homebrew/bin/brew /usr/local/bin/brew}; do
+    if [ -x "$candidate" ]; then
+      eval "$("$candidate" shellenv)"
+      BREW_NOT_ON_PATH="$candidate"
+      break
+    fi
+  done
+fi
+BREW_INSTALL='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+
 # ---------------------------------------------------------------------------
 say "0. Environment"
-if [ "$IS_WSL" = 1 ]; then ok "WSL detected${DISTRO_NAME:+ ($DISTRO_NAME)}"
+if [ "$IS_MACOS" = 1 ]; then ok "$DISTRO_NAME"
+elif [ "$IS_WSL" = 1 ]; then ok "WSL detected${DISTRO_NAME:+ ($DISTRO_NAME)}"
 else ok "native Linux${DISTRO_NAME:+ ($DISTRO_NAME)}"; fi
-case "$PKG_MGR" in
-  none) warn "unsupported distribution '${DISTRO_ID:-unknown}': packages are checked by command name only; install them yourself" ;;
-  *) ok "package manager: $PKG_MGR" ;;
-esac
+if [ "$IS_MACOS" = 1 ]; then
+  if ! have brew; then
+    bad "Homebrew is required on macOS. Install it with the official command, then rerun:"
+    echo "        $BREW_INSTALL"
+    PKG_MGR=none
+  else
+    ok "package manager: brew"
+    if [ -n "${BREW_NOT_ON_PATH:-}" ]; then
+      warn "Homebrew is installed but not on PATH in new terminals. Add it with:"
+      warn "  echo 'eval \"\$($BREW_NOT_ON_PATH shellenv)\"' >> ~/.zprofile"
+    fi
+  fi
+else
+  case "$PKG_MGR" in
+    none) warn "unsupported distribution '${DISTRO_ID:-unknown}': packages are checked by command name only; install them yourself" ;;
+    *) ok "package manager: $PKG_MGR" ;;
+  esac
+fi
 
 # ---------------------------------------------------------------------------
 say "1. System packages"
-PKGS="curl git gh"
-if [ "$WANT_RUST" = 1 ]; then
-  if [ "$PKG_MGR" = apt ]; then PKGS="$PKGS build-essential pkg-config"; else PKGS="$PKGS gcc pkg-config"; fi
+if [ "$IS_MACOS" = 1 ]; then
+  # macOS ships curl. The C compiler comes from Apple's Command Line Tools.
+  PKGS="git gh"
+  if [ "$WANT_RUST" = 1 ]; then PKGS="$PKGS pkgconf"; fi
+else
+  PKGS="curl git gh"
+  if [ "$WANT_RUST" = 1 ]; then
+    if [ "$PKG_MGR" = apt ]; then PKGS="$PKGS build-essential pkg-config"; else PKGS="$PKGS gcc pkg-config"; fi
+  fi
 fi
 
 pkg_installed() {
   case "$PKG_MGR" in
     dnf) rpm -q "$1" >/dev/null 2>&1 ;;
     apt) dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed' ;;
-    *) case "$1" in build-essential) have gcc ;; *) have "$1" ;; esac ;;
+    brew) brew list --formula "$1" >/dev/null 2>&1 ;;
+    *) case "$1" in build-essential) have gcc ;; pkgconf) have pkg-config ;; *) have "$1" ;; esac ;;
   esac
 }
 
@@ -131,12 +177,15 @@ elif [ "$PKG_MGR" = none ]; then
   bad "missing:$MISSING. Install them with your package manager, then rerun."
 else
   echo "  installing:$MISSING"
-  echo "  (you will be asked for your sudo password)"
+  [ "$PKG_MGR" = brew ] || echo "  (you will be asked for your sudo password)"
   install_packages() {
     # MISSING is a space-separated list of package names.
     # shellcheck disable=SC2086
-    if [ "$PKG_MGR" = dnf ]; then sudo dnf install -y $MISSING
-    else sudo apt-get update && sudo apt-get install -y $MISSING; fi
+    case "$PKG_MGR" in
+      dnf) sudo dnf install -y $MISSING ;;
+      apt) sudo apt-get update && sudo apt-get install -y $MISSING ;;
+      brew) brew install $MISSING ;;   # Homebrew never needs sudo
+    esac
   }
   if install_packages; then ok "system packages installed"
   else bad "package installation failed; rerun with --no-sudo to continue without them"; fi
@@ -164,6 +213,12 @@ gh_authenticated() {
 # ---------------------------------------------------------------------------
 if [ "$WANT_RUST" = 1 ]; then
 say "2. Rust toolchain"
+if [ "$IS_MACOS" = 1 ]; then
+  # Rust links with Apple's toolchain. Installing it opens a system dialog, so it
+  # stays a manual step, like the Visual Studio workload on Windows.
+  if xcode-select -p >/dev/null 2>&1; then ok "Xcode Command Line Tools installed (linker)"
+  else bad "Xcode Command Line Tools missing; Rust cannot link. Run: xcode-select --install"; fi
+fi
 if have rustup; then
   ok "rustup $(rustup --version 2>/dev/null | head -1)"
 elif [ "$CHECK_ONLY" = 1 ]; then
@@ -258,8 +313,20 @@ if [ "$WANT_PYTHON" = 1 ]; then
   EXTS="$EXTS ms-python.python charliermarsh.ruff"
 fi
 
+if ! have code && [ "$IS_MACOS" = 1 ] && [ "$PKG_MGR" = brew ]; then
+  if [ "$CHECK_ONLY" = 1 ] || [ "$NO_SUDO" = 1 ]; then
+    warn "VS Code is missing. Install with: brew install --cask visual-studio-code"
+  elif brew install --cask visual-studio-code && have code; then
+    ok "VS Code installed"
+  else
+    bad "VS Code installation failed; install it from https://code.visualstudio.com and rerun"
+  fi
+fi
 if ! have code; then
-  if [ "$IS_WSL" = 1 ]; then
+  if [ "$IS_MACOS" = 1 ]; then
+    warn "'code' is not on PATH. Open VS Code, run 'Shell Command: Install code command in PATH',"
+    warn "then rerun to install the editor extensions."
+  elif [ "$IS_WSL" = 1 ]; then
     warn "'code' is not on PATH. Open this folder from Windows VS Code with the WSL"
     warn "extension, then rerun from that window's terminal so extensions land in WSL."
   else
@@ -313,7 +380,9 @@ fi # Optional agent defaults
 
 # ---------------------------------------------------------------------------
 say "6. GitHub credentials and browser sign-in"
-if [ "$IS_WSL" = 0 ]; then
+if [ "$IS_MACOS" = 1 ]; then
+  skip "browser bridge is WSL-only; macOS opens sign-in pages in your default browser"
+elif [ "$IS_WSL" = 0 ]; then
   skip "browser bridge is WSL-only; native Linux opens sign-in pages with xdg-open"
 else
   # WSL has no browser of its own, so 'gh auth login --web' appears to hang
@@ -479,6 +548,10 @@ if [ "$DOCTOR" = 1 ]; then
     else
       skip "$HOME/src does not exist yet; keep Linux projects there, not under /mnt/c"
     fi
+  elif [ "$IS_MACOS" = 1 ]; then
+    ok "macOS detected ($(uname -m 2>/dev/null))"
+    if xcode-select -p >/dev/null 2>&1; then ok "Xcode Command Line Tools installed"
+    else warn "Xcode Command Line Tools missing; run: xcode-select --install"; fi
   else
     ok "native Linux kernel"
   fi

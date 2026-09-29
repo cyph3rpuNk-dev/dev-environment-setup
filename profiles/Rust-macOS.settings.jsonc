@@ -1,0 +1,14 @@
+// Create a VS Code profile named "Rust · macOS", then copy these user settings.
+// Select Cargo features in each repository according to its own build policy.
+{
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.extraArgs": ["--workspace", "--all-targets", "--", "-Dwarnings"],
+  "rust-analyzer.cargo.targetDir": true,
+  "files.eol": "\n",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "editor.formatOnSave": true,
+  "terminal.integrated.defaultProfile.osx": "zsh",
+  "search.exclude": { "**/target": true },
+  "files.watcherExclude": { "**/target/**": true }
+}

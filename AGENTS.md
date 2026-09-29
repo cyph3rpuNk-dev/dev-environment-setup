@@ -1,8 +1,8 @@
 # Development environment setup
 
 This repository maintains a cross-platform workstation setup and project-scaffolding
-toolkit for Windows and Linux (Fedora/RHEL via dnf, Debian/Ubuntu via apt), with WSL as
-an optional Linux environment on Windows. It is not application source. Start with
+toolkit for Windows, macOS (Homebrew) and Linux (Fedora/RHEL via dnf, Debian/Ubuntu via
+apt), with WSL as an optional Linux environment on Windows. It is not application source. Start with
 `README.md` for maintenance and `START-HERE.md` for workstation onboarding.
 
 ## Validation
@@ -17,8 +17,8 @@ Report unavailable platform checks honestly. Do not claim CI passed before it ru
 - Keep Windows PowerShell 5.1 compatibility for the initial bootstrap and maintain
   the Linux/Bash implementation alongside it when changing shared behavior; this
   includes keeping `new-project.ps1` and `new-project.sh` equivalent. The Linux
-  script must work on native Linux and in WSL; keep WSL-only behavior detected, not
-  assumed.
+  script must work on native Linux, in WSL and on macOS with its Bash 3.2; keep WSL- and
+  macOS-only behavior detected, not assumed.
 - Preserve LF endings. Keep templates self-contained after copying; document their
   destination and replaceable fields.
 - Keep check/doctor modes free of provisioning and configuration writes. Normal

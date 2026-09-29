@@ -84,6 +84,24 @@ WSL has no browser. Install the bridge with
 `export BROWSER=/usr/local/bin/wslview`. Alternatively copy the printed code and URL to
 a Windows browser yourself.
 
+## macOS
+
+### "Homebrew is required" although you installed it
+
+On Apple silicon Homebrew lives in `/opt/homebrew`, which new terminals only find after
+the installer's **Next steps** commands add it to your shell profile. The bootstrap finds
+it anyway and prints the command to run; after running it, open a new terminal.
+
+### `xcode-select: note: install requested` or a dialog appears
+
+Apple's Command Line Tools are installing. Finish the dialog, then rerun the bootstrap.
+Rust needs them to link programs.
+
+### `code` is not found after installing VS Code
+
+Open VS Code, press Cmd+Shift+P, and run **Shell Command: Install 'code' command in
+PATH**. Homebrew's VS Code install adds it automatically; a manual install does not.
+
 ## Linux and GitHub
 
 ### `git push` over HTTPS stalls with no output

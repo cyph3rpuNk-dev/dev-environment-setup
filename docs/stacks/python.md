@@ -5,12 +5,13 @@ powershell -NoProfile -File .\bootstrap-windows.ps1 -Stack Python -InstallMissin
 ```
 
 ```bash
-bash bootstrap-linux.sh --stack=python
+bash bootstrap-linux.sh --stack=python      # Linux or WSL
+bash bootstrap-macos.sh --stack=python      # macOS
 ```
 
 The stack installs [uv](https://github.com/astral-sh/uv) and the Python and Ruff VS
 Code extensions (`ms-python.python`, `charliermarsh.ruff`). On Windows uv comes from
-winget (`astral-sh.uv`). On Linux the official installer from `https://astral.sh/uv`
+winget (`astral-sh.uv`). On macOS and Linux the official installer from `https://astral.sh/uv`
 is downloaded completely before it runs; it installs to `~/.local/bin` and adds that
 directory to your shell profile, so open a new terminal afterwards.
 

@@ -57,7 +57,17 @@ case "$name" in
   dnf|apt-get)
     [ "${TEST_ALLOW_SUDO:-0}" = 1 ] || { echo 'Unexpected package manager call' >&2; exit 90; } ;;
   rpm) if missing "$2"; then exit 1; fi ;;
-  dpkg-query) if missing "${!#}"; then exit 1; fi; printf 'install ok installed' ;;
+  dpkg-query) for last; do :; done; if missing "$last"; then exit 1; fi; printf 'install ok installed' ;;
+  brew)
+    case "$1" in
+      list) if missing "${3:-}"; then exit 1; fi ;;
+      shellenv) printf 'export PATH="%s:$PATH"\n' "${0%/*}" ;;
+      install)
+        # A successful cask install provides the 'code' command, as the real cask does.
+        if [ "${2:-}" = --cask ]; then cp "$0" "${0%/*}/code"; fi ;;
+    esac ;;
+  sw_vers) printf '15.0\n' ;;
+  xcode-select) [ "${TEST_NO_CLT:-0}" = 1 ] && exit 2; printf '/Library/Developer/CommandLineTools\n' ;;
   rustup) printf 'rustfmt clippy\n' ;;
   rustc) printf 'rustc 1.85.0\n' ;;
   uv) printf 'uv 0.9.0\n' ;;
@@ -90,15 +100,17 @@ case "$name" in
   *) exit 0 ;;
 esac
 MOCK
-for command in sudo dnf apt-get rpm dpkg-query rustup rustc cargo uv code gh claude codex git curl cargo-binstall cargo-nextest cargo-audit cargo-machete cargo-deny bacon typos; do
+for command in sudo dnf apt-get rpm dpkg-query brew sw_vers xcode-select rustup rustc cargo uv code gh claude codex git curl cargo-binstall cargo-nextest cargo-audit cargo-machete cargo-deny bacon typos; do
   cp "$TEST_ROOT/mock-bin/mock" "$TEST_ROOT/mock-bin/$command"
   chmod +x "$TEST_ROOT/mock-bin/$command"
 done
 # run_bootstrap OS KERNEL [options]: HOME and PATH are set only for the child.
 run_bootstrap() {
   local os="$1" kernel="$2"; shift 2
+  # The kernel is pinned too, so Linux cases behave the same on a macOS test runner.
   env HOME="$TEST_ROOT/user" PATH="$TEST_ROOT/mock-bin:/usr/bin:/bin" \
     DEVSETUP_OS_RELEASE="$TEST_ROOT/os/$os" DEVSETUP_PROC_VERSION="$TEST_ROOT/os/$kernel" \
+    DEVSETUP_KERNEL="${TEST_KERNEL:-Linux}" DEVSETUP_BREW_CANDIDATES="${TEST_BREW_CANDIDATES:-$TEST_ROOT/no-such-brew}" \
     bash "$ROOT/bootstrap-linux.sh" "$@"
 }
 
@@ -194,9 +206,60 @@ pass 'Failed partial downloads are never executed and bootstrap returns failure'
 : > "$TEST_EVENTS"
 if env DEVSETUP_OS_RELEASE="$TEST_ROOT/os/fedora" bash "$ROOT/bootstrap-wsl.sh" --stack=unknown > /dev/null 2>&1; then fail 'wrapper accepted unknown stack'; fi
 env HOME="$TEST_ROOT/user" PATH="$TEST_ROOT/mock-bin:/usr/bin:/bin" DEVSETUP_OS_RELEASE="$TEST_ROOT/os/fedora" \
-  DEVSETUP_PROC_VERSION="$TEST_ROOT/os/wsl" bash "$ROOT/bootstrap-wsl.sh" --check > "$TEST_ROOT/wrapper.log"
+  DEVSETUP_KERNEL=Linux DEVSETUP_PROC_VERSION="$TEST_ROOT/os/wsl" bash "$ROOT/bootstrap-wsl.sh" --check > "$TEST_ROOT/wrapper.log"
 grep -q 'WSL detected' "$TEST_ROOT/wrapper.log" || fail 'wrapper did not run the Linux bootstrap'
 pass 'bootstrap-wsl.sh remains a compatible entry point'
+
+# macOS: Homebrew instead of dnf/apt, no sudo, no WSL features.
+: > "$TEST_EVENTS"
+TEST_KERNEL=Darwin run_bootstrap fedora native --check > "$TEST_ROOT/mac.log"
+grep -q 'macOS 15.0' "$TEST_ROOT/mac.log" && grep -q 'package manager: brew' "$TEST_ROOT/mac.log" || fail 'macOS not detected'
+grep -q 'macOS opens sign-in pages' "$TEST_ROOT/mac.log" || fail 'macOS looked for the WSL bridge'
+grep -q '^brew list --formula gh' "$TEST_EVENTS" || fail 'macOS packages not checked with brew'
+if grep -Eq '^(sudo|dnf|apt-get|rpm|dpkg-query) ' "$TEST_EVENTS"; then fail 'macOS used a Linux package manager or sudo'; fi
+if grep -q '^curl ' "$TEST_EVENTS"; then fail 'macOS check mode downloaded something'; fi
+result=0
+TEST_KERNEL=Darwin run_bootstrap fedora native --install-browser-bridge > /dev/null 2>&1 || result=$?
+[ "$result" -eq 2 ] || fail 'browser bridge accepted on macOS'
+: > "$TEST_EVENTS"
+TEST_KERNEL=Darwin TEST_MISSING_PKGS=gh run_bootstrap fedora native > "$TEST_ROOT/mac-install.log"
+grep -q '^brew install gh$' "$TEST_EVENTS" || fail 'macOS did not install the missing package with brew'
+if grep -q '^sudo ' "$TEST_EVENTS"; then fail 'macOS package installation used sudo'; fi
+pass 'macOS is detected and uses Homebrew without sudo or WSL features'
+result=0
+TEST_KERNEL=Darwin TEST_NO_CLT=1 run_bootstrap fedora native --check --stack=rust > "$TEST_ROOT/mac-rust.log" || result=$?
+[ "$result" -ne 0 ] && grep -q 'Xcode Command Line Tools missing' "$TEST_ROOT/mac-rust.log" || fail 'missing Apple linker not reported for Rust'
+grep -q '^brew list --formula pkgconf' "$TEST_EVENTS" || fail 'pkgconf not checked for Rust on macOS'
+pass 'Rust on macOS requires the Command Line Tools linker and pkgconf'
+mv "$TEST_ROOT/mock-bin/brew" "$TEST_ROOT/brew.saved"
+: > "$TEST_EVENTS"
+result=0
+TEST_KERNEL=Darwin run_bootstrap fedora native > "$TEST_ROOT/mac-nobrew.log" 2>&1 || result=$?
+[ "$result" -ne 0 ] && grep -q 'Homebrew is required' "$TEST_ROOT/mac-nobrew.log" || fail 'missing Homebrew not reported'
+grep -q 'raw.githubusercontent.com/Homebrew/install/HEAD/install.sh' "$TEST_ROOT/mac-nobrew.log" || fail 'Homebrew install command not shown'
+if grep -Eq '^(brew|sudo|curl) ' "$TEST_EVENTS"; then fail 'bootstrap tried to install without Homebrew'; fi
+mkdir -p "$TEST_ROOT/opt-brew"
+mv "$TEST_ROOT/brew.saved" "$TEST_ROOT/opt-brew/brew"
+TEST_KERNEL=Darwin TEST_BREW_CANDIDATES="$TEST_ROOT/opt-brew/brew" run_bootstrap fedora native --check > "$TEST_ROOT/mac-offpath.log"
+grep -q 'package manager: brew' "$TEST_ROOT/mac-offpath.log" && grep -q 'not on PATH in new terminals' "$TEST_ROOT/mac-offpath.log" || fail 'Homebrew outside PATH not found or not explained'
+mv "$TEST_ROOT/opt-brew/brew" "$TEST_ROOT/mock-bin/brew"
+pass 'macOS without Homebrew stops with the official command; Homebrew off PATH is found and explained'
+mv "$TEST_ROOT/mock-bin/code" "$TEST_ROOT/code.saved"
+: > "$TEST_EVENTS"
+TEST_KERNEL=Darwin run_bootstrap fedora native --check > "$TEST_ROOT/mac-nocode-check.log"
+if grep -q '^brew install' "$TEST_EVENTS"; then fail 'check mode installed VS Code'; fi
+grep -q 'brew install --cask visual-studio-code' "$TEST_ROOT/mac-nocode-check.log" || fail 'VS Code install command not shown'
+TEST_KERNEL=Darwin run_bootstrap fedora native > "$TEST_ROOT/mac-nocode.log"
+grep -q '^brew install --cask visual-studio-code' "$TEST_EVENTS" && grep -q 'VS Code installed' "$TEST_ROOT/mac-nocode.log" || fail 'VS Code not installed with Homebrew'
+mv "$TEST_ROOT/code.saved" "$TEST_ROOT/mock-bin/code"
+pass 'VS Code is installed with Homebrew on macOS, never in check mode'
+env HOME="$TEST_ROOT/user" PATH="$TEST_ROOT/mock-bin:/usr/bin:/bin" DEVSETUP_KERNEL=Darwin \
+  DEVSETUP_BREW_CANDIDATES="$TEST_ROOT/no-such-brew" bash "$ROOT/bootstrap-macos.sh" --check > "$TEST_ROOT/mac-wrapper.log"
+grep -q 'macOS 15.0' "$TEST_ROOT/mac-wrapper.log" || fail 'bootstrap-macos.sh did not run the bootstrap'
+result=0
+run_bootstrap fedora native --stack= > /dev/null 2>&1 || result=$?
+[ "$result" -eq 1 ] || fail 'empty stack list accepted'
+pass 'bootstrap-macos.sh is a working entry point; an empty stack list fails cleanly'
 
 for mode in ok empty fail; do
   result=0
@@ -222,7 +285,7 @@ pass 'Unfilled Bash gate refuses to report success'
 
 # Scaffolder: real git in a temporary parent; stdin is never a terminal here.
 NP="$TEST_ROOT/np"
-new_project() { env DEVSETUP_PROC_VERSION="$TEST_ROOT/os/${NP_KERNEL:-native}" bash "$ROOT/new-project.sh" "$@" < /dev/null; }
+new_project() { env DEVSETUP_KERNEL="${NP_OS:-Linux}" DEVSETUP_PROC_VERSION="$TEST_ROOT/os/${NP_KERNEL:-native}" bash "$ROOT/new-project.sh" "$@" < /dev/null; }
 new_project --name demo --parent "$NP" --windows-native no --linux-target yes --stack python > "$TEST_ROOT/np.log"
 for f in README.md PROJECT-CHARTER.md AGENTS.md CLAUDE.md scripts/check.sh .gitattributes .gitignore .editorconfig; do
   [ -f "$NP/demo/$f" ] || fail "scaffolder did not create $f"
@@ -254,6 +317,12 @@ result=0; new_project --name asks --parent "$NP" > /dev/null 2>&1 || result=$?
 result=0; NP_KERNEL=wsl new_project --name onwindows --parent /mnt/c/src --environment linux > /dev/null 2>&1 || result=$?
 [ "$result" -eq 1 ] || fail 'WSL project accepted on the Windows filesystem'
 pass 'Scaffolder refuses the wrong platform, existing projects, unsafe names, guesses and /mnt in WSL'
+NP_OS=Darwin new_project --name macapp --parent "$NP" --windows-native no --linux-target yes > /dev/null
+grep -q 'Canonical development environment: MACOS' "$NP/macapp/PROJECT-CHARTER.md" || fail 'macOS environment not recorded'
+grep -q 'container or Linux VM' "$NP/macapp/PROJECT-CHARTER.md" || fail 'macOS Linux-target reason not recorded'
+result=0; NP_OS=Darwin new_project --name macwin --parent "$NP" --windows-native yes --linux-target no > "$TEST_ROOT/np-macwin.log" || result=$?
+[ "$result" -eq 3 ] && [ ! -e "$NP/macwin" ] && grep -q 'Windows virtual machine' "$TEST_ROOT/np-macwin.log" || fail 'Windows project was created on macOS'
+pass 'Scaffolder records macOS and sends Windows-native projects to Windows'
 
 # Commit identity check: real Git in a temporary repository, identities set per commit.
 OWNER=owner@users.noreply.github.com

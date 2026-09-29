@@ -16,6 +16,9 @@ jobs:
             shell: pwsh
           - os: ubuntu-latest
             shell: pwsh
+          # macOS runs the same gate with its own Bash 3.2 and BSD tools.
+          - os: macos-latest
+            shell: pwsh
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:

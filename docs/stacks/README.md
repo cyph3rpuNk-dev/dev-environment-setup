@@ -6,7 +6,7 @@ PowerShell 7. It includes no language runtime, compiler or package manager.
 Select stacks explicitly on every run, including check and doctor. Selections are not
 remembered, and running without a stack later never uninstalls anything.
 
-| Stack | Windows | Linux / WSL | Guide |
+| Stack | Windows | macOS / Linux / WSL | Guide |
 |---|---|---|---|
 | Rust | `-Stack Rust` | `--stack=rust` | [rust.md](rust.md) |
 | Python (uv) | `-Stack Python` | `--stack=python` | [python.md](python.md) |

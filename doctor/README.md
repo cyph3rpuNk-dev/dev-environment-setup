@@ -8,11 +8,12 @@ powershell -NoProfile -File .\bootstrap-windows.ps1 -Doctor -Stack Rust,Python -
 ```
 
 ```bash
-bash bootstrap-linux.sh --doctor --stack=rust,python --configure-agents
+bash bootstrap-linux.sh --doctor --stack=rust,python --configure-agents   # Linux or WSL
+bash bootstrap-macos.sh --doctor --stack=rust,python --configure-agents   # macOS
 ```
 
 The doctor is deliberately read-only. It checks the operating-system boundary (native
-Windows, native Linux or WSL), base tools, editor extensions, and whatever stacks,
+Windows, macOS, native Linux or WSL), base tools, editor extensions, and whatever stacks,
 WSL and agent configuration you select. Selections are not persisted. The Windows
 doctor with `-Wsl` starts the default WSL distribution to prove it works, because a
 listed distribution can have a missing disk; that starts a process but installs and

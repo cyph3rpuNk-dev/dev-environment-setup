@@ -1,0 +1,16 @@
+// Create a VS Code profile named "General · macOS", then copy these user settings.
+// Starting profile for projects developed on a Mac, including Linux-targeted ones.
+{
+  "files.eol": "\n",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "editor.formatOnSave": true,
+  "terminal.integrated.defaultProfile.osx": "zsh",
+  "search.exclude": {
+    "**/.git": true
+  },
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true
+  }
+}

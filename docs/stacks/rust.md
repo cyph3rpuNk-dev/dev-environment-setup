@@ -27,7 +27,12 @@ downloaded completely before it runs, and it adds `~/.cargo/bin` to your shell
 profile, so open a new terminal afterwards. `--no-sudo` still prevents package
 installation; missing selected packages are reported as failures.
 
-Both platforms offer cargo-nextest, cargo-audit, cargo-deny, bacon and typos; Linux
+On macOS, `bash bootstrap-macos.sh --stack=rust` uses the same rustup installer and adds
+`pkgconf` with Homebrew. Rust links with Apple's Command Line Tools; if they are
+missing, the bootstrap fails with `xcode-select --install`, which opens a system dialog
+and is left to you.
+
+Every platform offers cargo-nextest, cargo-audit, cargo-deny, bacon and typos; Linux
 also includes cargo-machete. They are installed with `cargo-binstall` (prebuilt
 binaries) when possible and built from source otherwise.
 
