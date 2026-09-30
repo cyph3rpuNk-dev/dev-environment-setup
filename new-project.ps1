@@ -93,10 +93,12 @@ else {
 
 if ($Environment -eq 'Linux') {
     $stackOption = if ($Stack -ne 'None') { ' --stack ' + $Stack.ToLowerInvariant() } else { '' }
+    $claudeOption = if ($NoClaude) { ' --no-claude' } else { '' }
     Write-Host "Recommended environment: Linux, because $reason."
     Write-Host 'On this Windows machine that means WSL (bootstrap-windows.ps1 -Wsl sets it up).'
     Write-Host 'Open your WSL terminal and run:'
-    Write-Host ("  bash '" + (ConvertTo-WslPath $PSScriptRoot) + "/new-project.sh' --name $Name --environment linux$stackOption")
+    $bashPath = ((ConvertTo-WslPath $PSScriptRoot) + '/new-project.sh').Replace("'", ("'" + '"' + "'" + '"' + "'"))
+    Write-Host ("  bash '" + $bashPath + "' --name $Name --environment linux$stackOption$claudeOption")
     Write-Host 'Nothing was created.'
     exit 3
 }
@@ -109,7 +111,8 @@ $Parent = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPat
 $target = Join-Path $Parent $Name
 if (Test-Path -LiteralPath $target) {
     $item = Get-Item -LiteralPath $target -Force
-    if (-not $item.PSIsContainer -or @(Get-ChildItem -LiteralPath $target -Force).Count -gt 0) {
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        -not $item.PSIsContainer -or @(Get-ChildItem -LiteralPath $target -Force).Count -gt 0) {
         Stop-NewProject "$target already exists and is not an empty directory; nothing was changed"
     }
 }
@@ -144,9 +147,13 @@ function Write-FromTemplate ([string]$Template, [string]$Output, [hashtable]$Val
     [IO.File]::WriteAllText($Output, $text, $utf8NoBom)
 }
 
-# If anything below fails, remove what this run created so a rerun can start clean.
-# The target is ours: it did not exist, or it was an empty directory, before this point.
-$targetExisted = Test-Path -LiteralPath $target
+# Prepare in a private staging directory. Never recursively delete the destination.
+$destination = $target
+$null = [IO.Directory]::CreateDirectory($Parent)
+# A sibling keeps the final rename on the same filesystem, including external drives.
+$staging = Join-Path $Parent ('.devsetup-stage-' + [guid]::NewGuid().ToString('N'))
+$null = New-Item -ItemType Directory -Path $staging -ErrorAction Stop
+$target = Join-Path $staging 'project'
 try {
     $null = New-Item -ItemType Directory -Force -Path (Join-Path $target 'scripts')
     Write-FromTemplate 'README.md.template' (Join-Path $target 'README.md') @{ PROJECT_NAME = $Name; ENVIRONMENT = 'Windows'; GATE_COMMAND = $gate }
@@ -169,16 +176,23 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "git init failed in $target" }
     git -C $target symbolic-ref HEAD refs/heads/main
     if ($LASTEXITCODE -ne 0) { throw "could not set the initial branch to main in $target" }
+
+    # Directory.Move refuses an existing destination, including one created by
+    # another process after our check. Delete an existing empty directory only
+    # non-recursively: concurrent files cause failure instead of data loss.
+    $null = [IO.Directory]::CreateDirectory($Parent)
+    if (Test-Path -LiteralPath $destination) {
+        $item = Get-Item -LiteralPath $destination -Force
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Destination is a reparse point' }
+        [IO.Directory]::Delete($destination, $false)
+    }
+    [IO.Directory]::Move($target, $destination)
+    $target = $destination
 }
 catch {
-    if ($targetExisted) {
-        Get-ChildItem -LiteralPath $target -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    elseif (Test-Path -LiteralPath $target) {
-        Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    Stop-NewProject "setup failed ($_); removed the partial project at $target"
+    Stop-NewProject "setup failed ($_); destination files were preserved at $destination; staging retained at $staging"
 }
+[IO.Directory]::Delete($staging, $false)
 
 Write-Host ''
 Write-Host "Created $target"

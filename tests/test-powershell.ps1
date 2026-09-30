@@ -87,6 +87,11 @@ function Record([string]$Name, $Arguments) {
     $global:LASTEXITCODE = 0
 }
 function code { Record 'code' $args }
+function Get-CimInstance {
+    # Machine diagnostics are mocked too: tests must never inspect real hardware.
+    [pscustomobject]@{ BuildNumber = 'fixture'; TotalPhysicalMemory = 32GB; HypervisorPresent = $true; VirtualizationFirmwareEnabled = $true }
+}
+function Get-PSDrive { [pscustomobject]@{ Free = 100GB } }
 function git {
     Record 'git' $args
     # Only identity lookups answer, from the test's environment.
@@ -97,7 +102,7 @@ function git {
 function gh { Record 'gh' $args }
 function pwsh { Record 'pwsh' $args }
 function rustup { Record 'rustup' $args; 'stable-x86_64-pc-windows-msvc rustfmt clippy' }
-function rustc { Record 'rustc' $args; 'rustc fixture' }
+function rustc { Record 'rustc' $args; "rustc fixture`nhost: x86_64-pc-windows-msvc" }
 function cargo { Record 'cargo' $args }
 function cargo-binstall { Record 'cargo-binstall' $args }
 function cargo-nextest {}
@@ -163,6 +168,11 @@ exit $result
     $after = @($written | ForEach-Object { [IO.File]::ReadAllText($_) })
     Assert ($before[0] -eq $after[0] -and $before[1] -eq $after[1]) 'Agent configuration is unchanged on rerun'
     Assert (([regex]::Matches($after[0], '(?m)^\[mcp_servers\.github\]')).Count -eq 1) 'GitHub MCP table is not duplicated'
+    foreach ($existing in @('# [mcp_servers.github] is only a comment', '[mcp_servers."github"]')) {
+        [IO.File]::WriteAllText($written[0], $existing, $utf8)
+        & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -Agents | Out-Null
+        Assert ([IO.File]::ReadAllText($written[0]) -ceq $existing) 'Existing TOML remains byte-for-byte unchanged regardless of table spelling'
+    }
 
     # -Wsl adds the Remote-WSL extension; check mode never enables WSL.
     $fixture = Join-Path $testRoot 'profile-wsl'
@@ -193,6 +203,7 @@ exit $result
     # Helpers invoke these functions, so no real auth lookup or agent can run.
     function gh {
         $global:LASTEXITCODE = 0
+        if ($global:TestOldGh -and $args -contains '--active') { $global:LASTEXITCODE = 1; return }
         if ($args[1] -eq 'token') {
             if ($global:TestTokenFailure) { $global:LASTEXITCODE = 1; return }
             if (-not $global:TestEmptyToken) { 'fake-test-token' }
@@ -211,6 +222,10 @@ exit $result
             Assert ($LASTEXITCODE -eq 7) 'Credential helper propagates Codex exit code'
             Assert ($env:GITHUB_MCP_PAT -eq $initial) 'Credential helper restores caller environment'
         }
+        $global:TestOldGh = $true
+        & "$root/helpers/codex-with-github-mcp.ps1"
+        Assert ($LASTEXITCODE -eq 7 -and $env:GITHUB_MCP_PAT -eq 'fake-existing-token') 'Older GitHub CLI fallback launches and restores the environment'
+        $global:TestOldGh = $false
         $global:TestLaunchFailure = $true
         try { & "$root/helpers/codex-with-github-mcp.ps1"; throw 'Expected launch failure' }
         catch { Assert ($_.ToString() -match 'simulated launch failure') 'Launch error propagates' }
@@ -251,10 +266,11 @@ exit $result
     function Bad { param($Message) $script:probeErrors++ }
     function cargo {
         if ($args[0] -eq 'init') { $global:LASTEXITCODE = $script:initExit }
-        elseif ($args[0] -eq 'build') { $script:buildCalls++; $global:LASTEXITCODE = $script:buildExit }
+        elseif ($args[0] -eq 'build') { $script:buildCalls++; $script:buildArguments = @($args); $global:LASTEXITCODE = $script:buildExit }
         else { throw 'Unexpected cargo command' }
     }
     $Check = $false
+    function rustc { $global:LASTEXITCODE = 0; 'host: x86_64-pc-windows-msvc' }
     foreach ($scenario in @(@(1, 0, 0, 1), @(0, 1, 1, 1), @(0, 0, 1, 0))) {
         $script:initExit = $scenario[0]; $script:buildExit = $scenario[1]
         $script:buildCalls = 0; $script:probeErrors = 0
@@ -267,10 +283,18 @@ exit $result
     function Ok { param($Message) $script:okMessages += @($Message) }
     $script:initExit = 0; $script:buildExit = 0
     foreach ($msvc in @($true, $false)) {
-        $msvcHost = $msvc; $script:okMessages = @()
+        $script:fixtureHost = if ($msvc) { 'x86_64-pc-windows-msvc' } else { 'x86_64-pc-windows-gnu' }
+        function rustc { $global:LASTEXITCODE = 0; "host: $script:fixtureHost" }
+        # Deliberately seed the wrong value: the probe must derive it from rustc.
+        $msvcHost = -not $msvc; $script:okMessages = @()
         & ([scriptblock]::Create($probeAst.Extent.Text))
         Assert (($script:okMessages -contains 'MSVC linker works') -eq $msvc) "Linker probe claims MSVC only for an MSVC toolchain (msvc=$msvc)"
+        Assert (($script:buildArguments -join ' ') -eq "build --quiet --target $script:fixtureHost") 'Probe explicitly builds for the observed compiler host'
     }
+    function rustc { $global:LASTEXITCODE = 1; 'host: x86_64-pc-windows-msvc' }
+    $script:buildCalls = 0; $script:probeErrors = 0
+    & ([scriptblock]::Create($probeAst.Extent.Text))
+    Assert ($script:buildCalls -eq 0 -and $script:probeErrors -eq 1) 'Failed compiler inspection never runs a build or claims linker success'
 
     # Check the real winget and MCP branches, with commands replaced by stubs.
     $baseLoop = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.ForEachStatementAst] -and $node.Extent.Text.StartsWith('foreach ($t in $base)') }, $true)
@@ -383,12 +407,47 @@ exit $result
     try {
         $env:PATH = $failGit + [IO.Path]::PathSeparator + $savedPath
         $output = '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name Broken -Parent $np -Environment Windows | Out-String
-        Assert ($LASTEXITCODE -eq 1 -and -not (Test-Path (Join-Path $np 'Broken')) -and $output -match 'removed the partial project') 'A failed scaffold removes the project it created'
+        Assert ($LASTEXITCODE -eq 1 -and -not (Test-Path (Join-Path $np 'Broken')) -and $output -match 'destination files were preserved') 'A failed preparation never creates the destination'
         $null = New-Item -ItemType Directory -Path (Join-Path $np 'WasEmpty')
         '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name WasEmpty -Parent $np -Environment Windows | Out-Null
         Assert ($LASTEXITCODE -eq 1 -and @(Get-ChildItem -Force -LiteralPath (Join-Path $np 'WasEmpty')).Count -eq 0) 'A failed scaffold restores an empty target directory'
     }
     finally { $env:PATH = $savedPath }
+
+    # A writer that arrives during Git preparation must survive publication failure.
+    $concurrent = Join-Path $np 'Concurrent'
+    $null = New-Item -ItemType Directory -Path $concurrent
+    $harness = @'
+param($Source, $Parent)
+function git {
+    [IO.File]::WriteAllText((Join-Path $Parent 'Concurrent/sentinel'), 'keep')
+    $global:LASTEXITCODE = 0
+}
+& $Source -Name Concurrent -Parent $Parent -Environment Windows
+exit $LASTEXITCODE
+'@
+    [IO.File]::WriteAllText("$testRoot/concurrent.ps1", $harness, $utf8)
+    & $shellExe -NoProfile -File "$testRoot/concurrent.ps1" "$root/new-project.ps1" $np | Out-Null
+    Assert ($LASTEXITCODE -eq 1 -and [IO.File]::ReadAllText((Join-Path $concurrent 'sentinel')) -eq 'keep') 'Concurrent destination files survive a publication conflict'
+    Assert (-not (Test-Path (Join-Path $concurrent 'README.md'))) 'Publication conflict does not copy generated files'
+
+    $linkTarget = Join-Path $np 'LinkTarget'
+    $linkPath = Join-Path $np 'Linked'
+    $null = New-Item -ItemType Directory -Path $linkTarget
+    $linkCreated = $false
+    try {
+        $linkType = if ($env:OS -eq 'Windows_NT') { 'Junction' } else { 'SymbolicLink' }
+        $null = New-Item -ItemType $linkType -Path $linkPath -Target $linkTarget -ErrorAction Stop
+        $linkCreated = $true
+    }
+    catch { Write-Host 'SKIP: host cannot create a junction or symbolic link' }
+    if ($linkCreated) {
+        try {
+            & $shellExe -NoProfile -File "$root/new-project.ps1" -Name Linked -Parent $np -Environment Windows | Out-Null
+            Assert ($LASTEXITCODE -eq 1 -and @(Get-ChildItem -Force -LiteralPath $linkTarget).Count -eq 0) 'Scaffolder rejects a junction or symlink destination'
+        }
+        finally { [IO.Directory]::Delete($linkPath, $false) }
+    }
 
     # Embedded Claude JSON must stay valid on both platforms.
     foreach ($file in @('bootstrap-windows.ps1', 'bootstrap-linux.sh')) {

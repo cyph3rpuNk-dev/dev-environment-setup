@@ -158,8 +158,8 @@ if (Have 'rustup') {
         if ($LASTEXITCODE -eq 0) { Ok "rustfmt + clippy installed" }
         else { Bad "could not install rustfmt + clippy" }
     }
-    $hostLine = (rustup show 2>$null | Out-String)
-    $msvcHost = $hostLine -match 'msvc'
+    $hostLine = (rustup show active-toolchain 2>$null | Out-String).Trim()
+    $msvcHost = $LASTEXITCODE -eq 0 -and $hostLine -match '^\S+-windows-msvc(?:\s|$)'
     if ($msvcHost) { Ok "MSVC host toolchain in use" }
     else { Warn "MSVC host toolchain not detected. For Windows-native Rust use: rustup default stable-x86_64-pc-windows-msvc" }
 }
@@ -184,7 +184,14 @@ if ((Have 'cargo') -and -not $Check) {
         if ($LASTEXITCODE -ne 0) { throw "Could not create the linker probe" }
         Push-Location -LiteralPath $probe -ErrorAction Stop
         $locationPushed = $true
-        cargo build --quiet
+        # Resolve the compiler in the probe directory, not the caller's project.
+        $compiler = (rustc -vV 2>$null | Out-String)
+        if ($LASTEXITCODE -ne 0 -or $compiler -notmatch '(?m)^host:\s*([A-Za-z0-9_-]+)\s*$') {
+            throw 'Could not determine the compiler host for the linker probe'
+        }
+        $probeHost = $Matches[1]
+        $msvcHost = $probeHost -match '-windows-msvc$'
+        cargo build --quiet --target $probeHost
         if ($LASTEXITCODE -ne 0) { throw "Could not link the probe; install Visual Studio Build Tools with Desktop development with C++" }
         # Only an MSVC toolchain proves the MSVC linker; otherwise report what was shown.
         if ($msvcHost) { Ok "MSVC linker works" }
@@ -263,6 +270,10 @@ if (-not (Have 'code')) {
 }
 else {
     $installed = @(code --list-extensions 2>$null); if (-not $installed) { $installed = @() }
+    if ($LASTEXITCODE -ne 0) {
+        Bad "could not list VS Code extensions; skipping extension installation"
+        $exts = @()
+    }
     foreach ($e in $exts) {
         if ($installed -contains $e) {
             Ok $e
@@ -328,13 +339,14 @@ if (Have 'codex')  { Ok "codex found" }  else { Warn "codex CLI not found. Insta
 
 $codexDir = Join-Path $env:USERPROFILE '.codex'
 $codexCfg = Join-Path $codexDir 'config.toml'
+$codexCreated = $false
 if (-not $Check -and -not (Test-Path $codexCfg)) {
     try {
         New-Item -ItemType Directory -Force -Path $codexDir -ErrorAction Stop | Out-Null
         Write-ConfigFile $codexCfg @'
 # Codex owns whole tasks here, same as Claude Code, so it can write.
-# approval_policy = "on-request" keeps commands asking before they run;
-# that is the brake, not a read-only sandbox.
+# Routine workspace commands can run without approval; on-request asks at
+# permission boundaries. This is not per-command approval or a read-only sandbox.
 model_reasoning_effort = "high"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
@@ -349,6 +361,7 @@ url = "https://mcp.context7.com/mcp"
 sandbox = "elevated"
 '@
         Ok "wrote $codexCfg"
+        $codexCreated = $true
     }
     catch { Bad "could not write ${codexCfg}: $_" }
 }
@@ -416,8 +429,8 @@ if ($Check) {
 elseif (-not (Test-Path $codexCfg)) {
     Skip "no config.toml yet"
 }
-elseif ((Get-Content $codexCfg -Raw) -match '\[mcp_servers\.github\]') {
-    Ok "codex: github already in config.toml"
+elseif (-not $codexCreated) {
+    Skip "codex: existing config preserved; review GitHub MCP setup in docs/agents.md"
 }
 elseif ($githubAuthenticated) {
     try {

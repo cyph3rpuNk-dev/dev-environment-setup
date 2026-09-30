@@ -13,6 +13,11 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
 }
 & gh auth status --hostname github.com --active 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) {
+    # Distribution/older builds may not support --active. Token retrieval below
+    # still has to succeed before a child is started.
+    & gh auth status --hostname github.com 2>$null | Out-Null
+}
+if ($LASTEXITCODE -ne 0) {
     throw "GitHub CLI is not authenticated. Run: gh auth login --hostname github.com --git-protocol https --web"
 }
 $token = ((& gh auth token --hostname github.com 2>$null) | Out-String).Trim()

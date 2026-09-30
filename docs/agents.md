@@ -37,8 +37,9 @@ commands. Those are human decisions recorded in the charter.
 
 Created only when the file does not already exist; existing files are left alone.
 
-**Codex** (`~/.codex/config.toml`): `approval_policy = "on-request"` so commands ask
-before running, `sandbox_mode = "workspace-write"`, high reasoning effort, and the
+**Codex** (`~/.codex/config.toml`): `approval_policy = "on-request"` asks at permission
+boundaries; routine workspace commands can run without individual approval.
+The defaults also set `sandbox_mode = "workspace-write"`, high reasoning effort, and the
 Context7 documentation server. On Windows it adds `[windows] sandbox = "elevated"`.
 Do not set approvals to `never` on a repository where a command can touch hardware,
 production data or signing keys. For a read-only second-opinion pass, create
@@ -121,8 +122,10 @@ for repository work.
 
 - **Context7** (current library documentation) is added by `-ConfigureAgents`. It is
   most useful when a project pins fast-moving libraries.
-- **GitHub MCP** is optional. For Codex, run the bootstrap after `gh auth login`; it
-  adds a server entry that reads the token from `GITHUB_MCP_PAT`, and you launch Codex
+- **GitHub MCP** is optional. For Codex, run the bootstrap after `gh auth login`; when
+  creating a new config, it adds a server entry that reads the token from
+  `GITHUB_MCP_PAT`. Existing config files are preserved without parsing or appending;
+  review and merge the entry below manually if needed. Launch Codex
   through `helpers/codex-with-github-mcp.ps1` or `.sh`, which fetches the token from
   GitHub CLI and passes it to Codex in its environment instead of writing it to a file.
   Codex and every command it runs can read that token, and it carries your full GitHub
@@ -140,6 +143,15 @@ for repository work.
   ```
 
 Never put a token in `~/.bashrc`, a persistent Windows user variable or a repository.
+
+For an existing Codex config, merge this table only if an equivalent GitHub server
+entry is not already present. Keep existing customization and never duplicate a table:
+
+```toml
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+bearer_token_env_var = "GITHUB_MCP_PAT"
+```
 
 ## Habits that matter more than configuration
 

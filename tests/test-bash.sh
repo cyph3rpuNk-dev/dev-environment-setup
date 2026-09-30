@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 TEST_ROOT=$(mktemp -d)
+export TMPDIR="$TEST_ROOT"
 trap 'rm -rf -- "$TEST_ROOT"' EXIT
 pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
@@ -81,6 +82,7 @@ case "$name" in
   rustc) printf 'rustc 1.85.0\n' ;;
   uv) printf 'uv 0.9.0\n' ;;
   code)
+    if [ "$1" = --list-extensions ] && [ "${TEST_CODE_LIST_FAIL:-0}" = 1 ]; then exit 9; fi
     if [ "$1" = --list-extensions ]; then cat "$TEST_EXTENSIONS"
     else printf '%s\n' "$2" >> "$TEST_EXTENSIONS"; fi ;;
   gh)
@@ -153,6 +155,22 @@ cmp -s "$TEST_ROOT/settings.before" "$TEST_ROOT/user/.claude/settings.json" || f
 [ "$(grep -c '^\[mcp_servers.github\]' "$TEST_ROOT/user/.codex/config.toml")" -eq 1 ] || fail 'GitHub table duplicated'
 if grep -Eq '^(sudo|dnf|apt-get) ' "$TEST_EVENTS"; then fail '--no-sudo invoked privilege escalation'; fi
 pass 'First run and rerun preserve configuration and honor --no-sudo'
+printf '# [mcp_servers.github] is only a comment\n' > "$TEST_ROOT/user/.codex/config.toml"
+cp "$TEST_ROOT/user/.codex/config.toml" "$TEST_ROOT/existing-toml"
+run_bootstrap fedora native --configure-agents > /dev/null
+cmp -s "$TEST_ROOT/existing-toml" "$TEST_ROOT/user/.codex/config.toml" || fail 'existing TOML was modified'
+cp "$TEST_ROOT/config.before" "$TEST_ROOT/user/.codex/config.toml"
+pass 'Existing TOML is preserved without guessing table structure'
+: > "$TEST_EVENTS"
+result=0
+TEST_CODE_LIST_FAIL=1 run_bootstrap fedora native > "$TEST_ROOT/extensions-failed.log" || result=$?
+[ "$result" -ne 0 ] && ! grep -q '^code --install-extension' "$TEST_EVENTS" || fail 'failed extension listing did not stop installs'
+pass 'Failed extension listing stops dependent installation'
+printf 'timonwongXshellcheck\n' > "$TEST_EXTENSIONS"
+: > "$TEST_EVENTS"
+run_bootstrap fedora native > /dev/null
+grep -q '^code --install-extension timonwong.shellcheck' "$TEST_EVENTS" || fail 'extension IDs matched as regular expressions'
+pass 'Extension IDs are matched literally'
 : > "$TEST_EVENTS"
 run_bootstrap fedora wsl --doctor --stack=rust --configure-agents > "$TEST_ROOT/doctor.log"
 cmp -s "$TEST_ROOT/config.before" "$TEST_ROOT/user/.codex/config.toml" || fail 'Doctor changed config'
@@ -314,6 +332,11 @@ for mode in ok empty fail; do
   else [ "$result" -eq 1 ] || fail 'helper accepted missing token'; fi
 done
 pass 'Bash credential helper passes child status and rejects absent tokens'
+result=0
+env PATH="$TEST_ROOT/mock-bin:/usr/bin:/bin" TEST_HELPER=1 TEST_GH_VERSION=2.23.0 \
+  bash "$ROOT/helpers/codex-with-github-mcp.sh" > "$TEST_ROOT/helper-old.log" 2>&1 || result=$?
+[ "$result" -eq 7 ] || fail 'helper rejected an authenticated older GitHub CLI'
+pass 'Credential helper supports authenticated older GitHub CLI builds'
 
 mkdir -p "$TEST_ROOT/project/scripts"
 sed -e 's/{{FORMAT_COMMAND}}/false/' -e 's/{{LINT_COMMAND}}/missing-audit-command-747/' \
@@ -395,11 +418,37 @@ fail_project() {
     bash "$ROOT/new-project.sh" "$@" < /dev/null
 }
 result=0; fail_project --name broken --parent "$NP" --environment linux > "$TEST_ROOT/np-broken.log" 2>&1 || result=$?
-[ "$result" -ne 0 ] && [ ! -e "$NP/broken" ] && grep -q 'removed the partial project' "$TEST_ROOT/np-broken.log" || fail 'failed scaffold left a partial project'
+[ "$result" -ne 0 ] && [ ! -e "$NP/broken" ] && grep -q 'destination files were preserved' "$TEST_ROOT/np-broken.log" || fail 'failed preparation touched the destination'
 mkdir -p "$NP/wasempty"
 result=0; fail_project --name wasempty --parent "$NP" --environment linux > /dev/null 2>&1 || result=$?
 [ "$result" -ne 0 ] && [ -d "$NP/wasempty" ] && [ -z "$(ls -A -- "$NP/wasempty")" ] || fail 'failed scaffold did not restore the empty target'
 pass 'A failed scaffold removes only what it created'
+# Simulate a concurrent writer during preparation. The destination was empty at
+# validation but now contains someone else's file when publication starts.
+mkdir -p "$NP/concurrent"
+cat > "$TEST_ROOT/failgit/git" <<'CONCURRENT'
+#!/usr/bin/env bash
+printf 'keep\n' > "$TEST_DESTINATION/sentinel"
+exit 0
+CONCURRENT
+result=0
+TEST_DESTINATION="$NP/concurrent" fail_project --name concurrent --parent "$NP" --environment linux > /dev/null 2>&1 || result=$?
+[ "$result" -ne 0 ] && grep -qx keep "$NP/concurrent/sentinel" || fail 'concurrent destination data was lost'
+[ ! -e "$NP/concurrent/README.md" ] || fail 'concurrent destination was partially published'
+pass 'A concurrent writer prevents publication and its files survive'
+# Native Unix supports real symlinks; Git Bash may require Windows privileges.
+mkdir -p "$NP/link-target"
+if ln -s "$NP/link-target" "$NP/linked" 2>/dev/null && [ -L "$NP/linked" ]; then
+  result=0; new_project --name linked --parent "$NP" --environment linux > /dev/null 2>&1 || result=$?
+  [ "$result" -ne 0 ] && [ -z "$(ls -A -- "$NP/link-target")" ] || fail 'target symlink was followed'
+  pass 'Scaffolder refuses a symlink at the final project directory'
+else
+  echo 'SKIP: host cannot create a real symbolic link'
+fi
+result=0
+new_project --name winoptions --parent "$NP" --environment windows --stack rust --no-claude > "$TEST_ROOT/handoff.log" || result=$?
+[ "$result" -eq 3 ] && grep -q -- '-Stack rust -NoClaude' "$TEST_ROOT/handoff.log" || fail 'Windows handoff lost selections'
+pass 'Windows handoff preserves stack and Claude selection'
 NP_OS=Darwin new_project --name macapp --parent "$NP" --windows-native no --linux-target yes > /dev/null
 grep -q 'Canonical development environment: MACOS' "$NP/macapp/PROJECT-CHARTER.md" || fail 'macOS environment not recorded'
 grep -q 'container or Linux VM' "$NP/macapp/PROJECT-CHARTER.md" || fail 'macOS Linux-target reason not recorded'
@@ -444,4 +493,13 @@ result=0
 (cd "$ID" && env ALLOWED_EMAILS="$OWNER" bash "$ROOT/scripts/check-commit-identity.sh" no-such-branch) > "$TEST_ROOT/identity.log" 2>&1 || result=$?
 [ "$result" -ne 0 ] || fail 'identity check passed with no commits to check'
 pass 'Identity check fails closed without configuration or commits'
+# A missing grep must not turn the forbidden-attribution check into a success.
+mkdir -p "$TEST_ROOT/identity-no-grep"
+cp "$TEST_ROOT/mock-bin/git" "$TEST_ROOT/identity-no-grep/git"
+result=0
+env PATH="$TEST_ROOT/identity-no-grep" ALLOWED_EMAILS="$OWNER" "$BASH" \
+  "$ROOT/scripts/check-commit-identity.sh" HEAD > "$TEST_ROOT/missing-grep.log" 2>&1 || result=$?
+[ "$result" -ne 0 ] && grep -q 'required command unavailable: grep' "$TEST_ROOT/missing-grep.log" || fail 'identity check passed without grep'
+pass 'Identity check fails closed when its attribution matcher is unavailable'
+
 echo 'Bash regressions passed.'

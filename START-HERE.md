@@ -263,8 +263,8 @@ Open a new terminal, confirm with `claude --version` / `claude doctor` and
 Windows does not sign in WSL. In VS Code, install **Claude Code** (publisher Anthropic)
 and **Codex** (publisher OpenAI); the extension does not put the CLI on `PATH`.
 
-To apply this toolkit's conservative agent defaults (Codex asks before running
-commands; Claude's file tools are denied `.env` files, common key files and the SSH and
+To apply this toolkit's conservative agent defaults (Codex asks at permission
+boundaries, while routine workspace commands can run without approval; Claude's file tools are denied `.env` files, common key files and the SSH and
 GPG folders, as a safeguard rather than a complete barrier; Context7 documentation server),
 rerun the bootstrap with `-ConfigureAgents` or `--configure-agents`. Existing settings
 files are never overwritten. [docs/agents.md](docs/agents.md) explains the choices,
