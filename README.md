@@ -2,29 +2,53 @@
 
 **[New to coding with AI? Start here.](docs/vibe-coder-project-guide.md)** A plain-language guide to turning your idea into a project with a coding agent.
 
-A workstation toolkit for starting and building software projects on **Windows**,
-**macOS** or **Linux**, with an optional **WSL** Linux environment for Windows users
-whose project targets Linux. Clone it onto the machine you use, run the bootstrap
-for that operating system, then create each new project with the scaffolder.
+Prepare your computer and start a software project with a clear foundation. This
+toolkit helps beginners and experienced developers install development tools,
+choose a working environment, and create project folders with documented goals,
+coding-agent instructions, and local checks. Follow the guides yourself or work
+through them with a coding agent on **Windows**, **macOS**, **Linux**, or **WSL**.
+
+## Choose your starting point
+
+| I want to… | Start here |
+|---|---|
+| Understand how to build with an AI coding agent | [Beginner project guide](docs/vibe-coder-project-guide.md) |
+| Prepare my computer for development | [START-HERE.md](START-HERE.md) |
+| Plan and create a new project | [NEW-PROJECT.md](NEW-PROJECT.md) |
+| Have an agent walk me through setup or improving an existing project | [GUIDED-SETUP.md](GUIDED-SETUP.md) |
+
+## What the toolkit does
 
 It does three things:
 
 1. **Prepares the machine.** Git, GitHub CLI, VS Code extensions and, only when you
    select them, language stacks (Rust, Python/uv), a WSL environment and AI coding
    agent defaults. Check and doctor modes report without changing anything.
-2. **Helps you choose where a project lives.** A native Windows program belongs on
-   Windows. Anything that runs on or deploys to Linux (web servers, WordPress/PHP,
-   containers, Linux services) belongs on Linux, which on a Windows machine means WSL
-   and on a Mac means developing natively with containers for Linux-only parts.
+2. **Helps you choose where a project lives.** Use Windows for Windows-only tools
+   and dependencies. For projects deployed to Linux, the toolkit recommends Linux
+   or WSL on Windows to keep development close to deployment. Many web projects
+   can also be developed on Windows or macOS; the right choice depends on their
+   dependencies. On a Mac, develop natively and use containers or a Linux virtual
+   machine for Linux-only requirements.
 3. **Starts new repositories from a reviewed foundation.** A project charter, shared
-   agent policy (`AGENTS.md`, `CLAUDE.md`), one local gate that CI also runs, and
+   agent policy (`AGENTS.md`, optional `CLAUDE.md`), local check scripts ready to
+   connect to continuous integration (CI), and
    sensible Git defaults. Undecided choices stay visible instead of being guessed.
+
+The scaffolder creates the project's foundation. You still need to initialize the
+chosen language, fill in project decisions, build application code, add meaningful
+tests, and configure CI. A **gate** is the command that runs the project's required
+checks, such as formatting, linting, and tests. Stack-specific gates need the
+corresponding project tools; a gate with unresolved placeholders refuses to run.
 
 ## Get the toolkit
 
 You need Git to clone. Keep the toolkit outside your project repositories.
 
-**Windows** (PowerShell, no administrator needed):
+**Windows** (PowerShell):
+
+Cloning needs no administrator rights. Installing Git may prompt for administrator
+approval.
 
 ```powershell
 winget install --id Git.Git -e          # skip if 'git --version' already works
@@ -60,7 +84,7 @@ Full, explained steps are in [START-HERE.md](START-HERE.md). The short version:
 
 | You are on | Run | Add a stack |
 |---|---|---|
-| Windows | `powershell -NoProfile -File .\bootstrap-windows.ps1 -Check`, then `-InstallMissing` | `-Stack Rust,Python` |
+| Windows | `powershell -NoProfile -File .\bootstrap-windows.ps1 -Check`, then `powershell -NoProfile -File .\bootstrap-windows.ps1 -InstallMissing` | `-Stack Rust,Python` |
 | macOS | `bash bootstrap-macos.sh --check`, then `bash bootstrap-macos.sh` (needs [Homebrew](https://brew.sh)) | `--stack=rust,python` |
 | Linux | `bash bootstrap-linux.sh --check`, then `bash bootstrap-linux.sh` | `--stack=rust,python` |
 | Windows, Linux-targeted project | Windows steps with `-Wsl` added (Administrator PowerShell), then inside WSL the Linux steps | as above |
@@ -94,8 +118,9 @@ computer, and creates the project; it can also bring an existing project into or
 It asks before each step that installs something, needs your password or changes
 GitHub, and hands you the steps only you can do, such as typing your password or
 signing in in your browser. [GUIDED-SETUP.md](GUIDED-SETUP.md) holds its instructions.
-Tested so far with Claude Code; Codex reads the same instructions but has not been
-tested yet.
+The guided workflow has previously been tested with Claude Code. Codex has been
+used for repository maintenance and offline validation; a complete guided setup
+on a fresh machine with Codex has not yet been verified.
 
 ## What it never does
 
@@ -113,6 +138,7 @@ tested yet.
 
 | Path | Purpose |
 |---|---|
+| [Beginner project guide](docs/vibe-coder-project-guide.md) | Plain-language workflow and starting prompts for building with a coding agent |
 | [START-HERE.md](START-HERE.md) | Guided machine setup for Windows, macOS, Linux, and Windows + WSL |
 | [GUIDED-SETUP.md](GUIDED-SETUP.md) | Instructions that let a coding agent (Claude Code or Codex) interview you and do the setup |
 | [NEW-PROJECT.md](NEW-PROJECT.md) | Turning an idea into a repository; what the scaffolder creates and what you still decide |
@@ -130,7 +156,7 @@ tested yet.
 
 ## Maintaining this toolkit
 
-Run the offline gate from any directory:
+Run the offline gate from the toolkit folder:
 
 ```powershell
 powershell -NoProfile -File scripts/check.ps1
