@@ -8,6 +8,12 @@
 # account. Merges made on GitHub's website are committed by GitHub itself, so that
 # committer is accepted; their author must still be an allowed email.
 set -euo pipefail
+for dependency in git grep; do
+  command -v "$dependency" >/dev/null 2>&1 || {
+    echo "FAIL required command unavailable: $dependency" >&2
+    exit 1
+  }
+done
 rev=${1:-HEAD}
 allowed=${ALLOWED_EMAILS:?set ALLOWED_EMAILS to the permitted author emails}
 web_committer=noreply@github.com

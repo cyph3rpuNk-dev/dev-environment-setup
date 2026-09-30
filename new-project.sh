@@ -103,9 +103,12 @@ IS_WSL=0
 if [ "$KERNEL" != Darwin ] && grep -qi microsoft "$PROC_VERSION" 2>/dev/null; then IS_WSL=1; fi
 
 if [ "$ENVIRONMENT" = windows ]; then
+  stack_option=""; claude_option=""
+  [ "$STACK" = none ] || stack_option=" -Stack $STACK"
+  [ "$CLAUDE" = 1 ] || claude_option=" -NoClaude"
   echo "Recommended environment: native Windows, because $REASON."
   echo "Create it from PowerShell on a Windows PC or Windows virtual machine instead:"
-  echo "  powershell -NoProfile -File .\\new-project.ps1 -Name $NAME -Environment Windows"
+  echo "  powershell -NoProfile -File .\\new-project.ps1 -Name $NAME -Environment Windows$stack_option$claude_option"
   echo "Nothing was created."
   exit 3
 fi
@@ -130,6 +133,9 @@ if [ "$IS_WSL" = 1 ]; then
   esac
 fi
 TARGET="$PARENT/$NAME"
+if [ -L "$TARGET" ]; then
+  die "$TARGET is a symbolic link; nothing was changed"
+fi
 if [ -e "$TARGET" ] && { [ ! -d "$TARGET" ] || [ -n "$(ls -A -- "$TARGET")" ]; }; then
   die "$TARGET already exists and is not an empty directory; nothing was changed"
 fi
@@ -176,18 +182,23 @@ render() { # render TEMPLATE OUTPUT KEY VALUE ...
   done
 }
 
-# If anything below fails, remove what this run created so a rerun can start clean.
-# The target is ours: it did not exist, or it was an empty directory, before this point.
-if [ -d "$TARGET" ]; then TARGET_EXISTED=1; else TARGET_EXISTED=0; fi
+# Prepare away from the destination. Never recursively delete a user-selected path.
+DESTINATION=$TARGET
+STAGING=$(mktemp -d) || die "cannot create a private staging directory"
+STAGING=$(cd -P -- "$STAGING" && pwd -P) || die "cannot resolve staging directory"
+TARGET="$STAGING/project"
 CREATED=0
 cleanup_partial() {
-  [ "$CREATED" = 1 ] && return
-  if [ "$TARGET_EXISTED" = 1 ]; then
-    find "$TARGET" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null
+  if [ "$CREATED" = 1 ]; then
+    # Only the absolute mktemp directory may be removed, never the destination.
+    if [ ! -L "$STAGING" ] && [ "$(cd -P -- "$STAGING" && pwd -P)" = "$STAGING" ]; then
+      rm -rf -- "$STAGING" || echo "new-project: could not clean staging at $STAGING" >&2
+      return
+    fi
   else
-    rm -rf -- "$TARGET"
+    echo "new-project: setup failed; destination files were preserved at $DESTINATION" >&2
   fi
-  echo "new-project: setup failed; removed the partial project at $TARGET" >&2
+  echo "new-project: staging directory retained at $STAGING" >&2
 }
 trap cleanup_partial EXIT
 set -e
@@ -213,9 +224,39 @@ if [ -n "$IGNORE_EXTRA" ]; then printf '%s\n' "$IGNORE_EXTRA" >> "$TARGET/.gitig
 render editorconfig.template "$TARGET/.editorconfig"
 git init --quiet -- "$TARGET"
 git -C "$TARGET" symbolic-ref HEAD refs/heads/main
+
+# Publish with exclusive file creation. mkdir must also succeed exclusively for
+# each child directory. If another process changes the destination, preserve both
+# its files and any files already published; do not attempt recursive rollback.
+publish_tree() {
+  local source="$1" destination="$2" entry name
+  for entry in "$source"/* "$source"/.[!.]* "$source"/..?*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    name=${entry##*/}
+    [ ! -L "$entry" ] || { echo "Refusing staged symlink: $entry" >&2; return 1; }
+    if [ -d "$entry" ]; then
+      mkdir -- "$destination/$name" || return 1
+      publish_tree "$entry" "$destination/$name" || return 1
+    elif [ -f "$entry" ]; then
+      (set -C; cat -- "$entry" > "$destination/$name") || return 1
+      if [ -x "$entry" ]; then chmod +x "$destination/$name" || return 1; fi
+    else
+      echo "Refusing staged special file: $entry" >&2; return 1
+    fi
+  done
+}
+mkdir -p -- "$PARENT"
+[ ! -L "$DESTINATION" ] || die "destination became a symbolic link"
+if [ -e "$DESTINATION" ]; then
+  [ -d "$DESTINATION" ] && [ -z "$(ls -A -- "$DESTINATION")" ] || die "destination is no longer empty"
+else
+  mkdir -- "$DESTINATION"
+fi
+# Anchor traversal to this directory even if a parent is renamed during publication.
+(cd -P -- "$DESTINATION" && publish_tree "$TARGET" .)
+TARGET=$DESTINATION
 set +e
 CREATED=1
-trap - EXIT
 
 cat <<EOF
 

@@ -340,9 +340,9 @@ if ! have code; then
     warn "then rerun to install the editor extensions."
   fi
 else
-  INSTALLED_EXTS=$(code --list-extensions 2>/dev/null || true)
+  if INSTALLED_EXTS=$(code --list-extensions 2>/dev/null); then
   for e in $EXTS; do
-    if printf '%s\n' "$INSTALLED_EXTS" | grep -qix "$e"; then
+    if printf '%s\n' "$INSTALLED_EXTS" | grep -Fqix "$e"; then
       ok "$e"
     elif [ "$CHECK_ONLY" = 1 ]; then
       warn "$e is missing"
@@ -351,6 +351,9 @@ else
         || bad "could not install $e (check the name in the Extensions view)"
     fi
   done
+  else
+    bad "could not list VS Code extensions; skipping extension installation"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -362,11 +365,12 @@ have codex  && ok "codex $(codex --version 2>/dev/null | head -1)" \
   || warn "codex CLI not found. Install it (see START-HERE.md), then run 'codex' once to sign in."
 
 # Codex defaults. Written only if the file is absent.
+CODEX_CREATED=0
 if [ "$CHECK_ONLY" = 0 ] && [ ! -f "$HOME/.codex/config.toml" ]; then
   if mkdir -p "$HOME/.codex" && cat > "$HOME/.codex/config.toml" <<'TOML'
 # Codex owns whole tasks here, same as Claude Code, so it can write.
-# approval_policy = "on-request" keeps commands asking before they run;
-# that is the brake, not a read-only sandbox.
+# Routine workspace commands can run without approval; on-request asks at
+# permission boundaries. This is not per-command approval or a read-only sandbox.
 model_reasoning_effort = "high"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
@@ -377,7 +381,7 @@ sandbox_mode = "workspace-write"
 [mcp_servers.context7]
 url = "https://mcp.context7.com/mcp"
 TOML
-  then ok "wrote ~/.codex/config.toml"
+  then CODEX_CREATED=1; ok "wrote ~/.codex/config.toml"
   else bad "could not write ~/.codex/config.toml"; fi
 elif [ -f "$HOME/.codex/config.toml" ]; then
   skip "$HOME/.codex/config.toml already exists, left alone"
@@ -484,15 +488,15 @@ fi
 
 # --- Codex -----------------------------------------------------------------
 # context7 is written with the initial config above. The GitHub table contains no
-# credential, so it is appended after GitHub CLI authentication proves the helper
-# can obtain one when Codex starts.
+# credential. Only append to the configuration created by this invocation;
+# arbitrary existing TOML must be merged manually rather than guessed with regex.
 CODEX_CFG="$HOME/.codex/config.toml"
 if [ "$CHECK_ONLY" = 1 ]; then
   skip "not editing $CODEX_CFG"
 elif [ ! -f "$CODEX_CFG" ]; then
   skip "no ~/.codex/config.toml yet"
-elif grep -q '\[mcp_servers.github\]' "$CODEX_CFG"; then
-  ok "codex: github already in config.toml"
+elif [ "$CODEX_CREATED" = 0 ]; then
+  skip "codex: existing config preserved; review GitHub MCP setup in docs/agents.md"
 elif [ "$GITHUB_AUTHENTICATED" = 1 ]; then
   if cat >> "$CODEX_CFG" <<'TOML'
 
