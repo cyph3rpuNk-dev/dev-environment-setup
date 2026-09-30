@@ -1,5 +1,7 @@
 # Guided setup: instructions for a coding agent
 
+**For people new to coding with AI:** read the [vibe coder project guide](docs/vibe-coder-project-guide.md) for an overview and a starting prompt before using the agent instructions below.
+
 **For people:** this needs a coding agent that can run commands on your computer,
 **Claude Code or Codex**. A chat assistant that cannot run commands is not enough.
 Install one from its official page (the commands are in `START-HERE.md`, Step 7), start

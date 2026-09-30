@@ -1,5 +1,7 @@
 # Start here
 
+For an overview of building with a coding agent, read the [vibe coder project guide](docs/vibe-coder-project-guide.md). Return here for the detailed machine setup steps.
+
 This guide takes a machine from nothing to ready for project work. Follow it top to
 bottom the first time. Each step says what to run, what a good result looks like, and
 what to do when it is not.

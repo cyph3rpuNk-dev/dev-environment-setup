@@ -1,5 +1,7 @@
 # Development environment setup
 
+**[New to coding with AI? Start here.](docs/vibe-coder-project-guide.md)** A plain-language guide to turning your idea into a project with a coding agent.
+
 A workstation toolkit for starting and building software projects on **Windows**,
 **macOS** or **Linux**, with an optional **WSL** Linux environment for Windows users
 whose project targets Linux. Clone it onto the machine you use, run the bootstrap
