@@ -242,6 +242,10 @@ if (Have 'cargo') {
     Install-Tool 'bacon'         'bacon'         'background clippy while an agent edits'
     Install-Tool 'typos'         'typos-cli'     'documentation spell checking'
 }
+elseif (-not (Have 'rustup')) {
+    # A missing rustup is already reported in Base tools; count that cause once.
+    Skip "cargo tools skipped until rustup is installed (see Base tools)"
+}
 else { Bad "cargo not available; skipping cargo tools" }
 
 } # Optional Rust stack

@@ -237,19 +237,22 @@ if [ "$IS_MACOS" = 1 ]; then
   if xcode-select -p >/dev/null 2>&1; then ok "Xcode Command Line Tools installed (linker)"
   else bad "Xcode Command Line Tools missing; Rust cannot link. Run: xcode-select --install"; fi
 fi
+# A missing or failed rustup is one required failure. Its consequences (no rustc,
+# no cargo) are reported as skips so one cause is not counted three times.
+RUSTUP_FAILED=0
 if have rustup; then
   ok "rustup $(rustup --version 2>/dev/null | head -1)"
 elif [ "$CHECK_ONLY" = 1 ]; then
-  bad "rustup not installed"
+  bad "rustup not installed"; RUSTUP_FAILED=1
 else
   echo "  installing rustup from https://rustup.rs ..."
   # rustup adds ~/.cargo/bin to the shell profile so new terminals find cargo.
   if run_downloaded_installer https://sh.rustup.rs -y; then
     add_path_dir "$HOME/.cargo/bin"
-    have rustup && ok "rustup installed (open a new terminal to use it)" \
-      || bad "rustup installer completed but rustup is unavailable"
+    if have rustup; then ok "rustup installed (open a new terminal to use it)"
+    else bad "rustup installer completed but rustup is unavailable"; RUSTUP_FAILED=1; fi
   else
-    bad "rustup install failed"
+    bad "rustup install failed"; RUSTUP_FAILED=1
   fi
 fi
 
@@ -260,7 +263,9 @@ if have rustup && [ "$CHECK_ONLY" = 0 ]; then
   rustup component add rustfmt clippy && ok "rustfmt + clippy" \
     || bad "could not add rustfmt/clippy"
 fi
-have rustc && ok "$(rustc --version)" || bad "rustc not on PATH (open a new terminal and rerun)"
+if have rustc; then ok "$(rustc --version)"
+elif [ "$RUSTUP_FAILED" = 1 ]; then skip "rustc unavailable until rustup is installed (reported above)"
+else bad "rustc not on PATH (open a new terminal and rerun)"; fi
 
 # Toolchain version requirements belong to each project.
 say "3. Cargo tools"
@@ -291,6 +296,8 @@ if have cargo; then
   install_tool cargo-deny    cargo-deny    "dependency policy"
   install_tool bacon         bacon         "background clippy while an agent edits"
   install_tool typos         typos-cli     "typo check for the docs"
+elif [ "$RUSTUP_FAILED" = 1 ]; then
+  skip "cargo tools skipped until rustup is installed (reported above)"
 else
   bad "cargo not available; skipping cargo tools"
 fi
@@ -407,7 +414,15 @@ else
   # WSL has no browser of its own, so 'gh auth login --web' appears to hang
   # without the optional bridge that opens URLs in the Windows default browser.
   PS_EXE="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-  if [ "$CHECK_ONLY" = 1 ] || [ "$INSTALL_BROWSER_BRIDGE" = 0 ]; then
+  # A wslview from the distribution (wslu) or the user already does the job. It is
+  # preserved, so report it rather than counting the preservation as a failure.
+  EXISTING_BRIDGE=$(command -v wslview 2>/dev/null || true)
+  if [ -n "$EXISTING_BRIDGE" ] && [ "$EXISTING_BRIDGE" != /usr/local/bin/wslview ]; then
+    ok "existing browser bridge left unchanged: $EXISTING_BRIDGE"
+    if [ -z "${BROWSER:-}" ]; then
+      skip "if sign-in pages do not open, run: export BROWSER=$EXISTING_BRIDGE"
+    fi
+  elif [ "$CHECK_ONLY" = 1 ] || [ "$INSTALL_BROWSER_BRIDGE" = 0 ]; then
     if cmp -s "$SCRIPT_DIR/helpers/wslview.sh" /usr/local/bin/wslview && [ -x /usr/local/bin/wslview ]; then
       ok "current browser bridge present"
     else

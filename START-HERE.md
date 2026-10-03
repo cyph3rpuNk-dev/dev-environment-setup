@@ -173,8 +173,10 @@ bash bootstrap-linux.sh --install-browser-bridge
 export BROWSER=/usr/local/bin/wslview      # or open a new login shell
 ```
 
-If `wslview` already exists elsewhere on PATH, the installer preserves it and stops;
-use that handler instead. An existing `xdg-open` anywhere on PATH is left in place,
+If `wslview` already exists elsewhere on PATH (for example from the distribution's
+`wslu` package), the bootstrap reports it as working, installs nothing and uses no
+`sudo`. If sign-in pages still do not open, run `export BROWSER=<that path>` as it
+suggests. An existing `xdg-open` anywhere on PATH is left in place,
 including its support for opening local files.
 
 ---
