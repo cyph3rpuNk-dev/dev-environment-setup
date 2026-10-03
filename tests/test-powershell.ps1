@@ -91,6 +91,7 @@ function Record([string]$Name, $Arguments) {
 function Get-Command {
     param($Name, $ErrorAction)
     if ($Name -eq 'rustup' -and $env:TEST_NO_RUSTUP -eq '1') { return }
+    if ($Name -in @('rustc', 'cargo') -and $env:TEST_NO_RUST -eq '1') { return }
     Microsoft.PowerShell.Core\Get-Command $Name -ErrorAction SilentlyContinue
 }
 function code { Record 'code' $args }
@@ -162,7 +163,11 @@ exit $result
         $env:TEST_NO_RUSTUP = '1'
         $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Rust' -Inspect | Out-String
         Assert ($LASTEXITCODE -eq 1 -and ([regex]::Matches($output, 'FAIL.*Rust toolchain installer')).Count -eq 1) 'Missing rustup counts as one required failure'
-    } finally { $env:TEST_NO_RUSTUP = $savedNoRustup }
+        # With no Rust at all (no rustc or cargo either), the cause is still counted once.
+        $env:TEST_NO_RUST = '1'
+        $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Rust' -Inspect | Out-String
+        Assert ($LASTEXITCODE -eq 1 -and ([regex]::Matches($output, 'FAIL')).Count -eq 1 -and $output -match 'cargo tools skipped until rustup is installed') 'Missing Rust toolchain counts as one required failure'
+    } finally { $env:TEST_NO_RUSTUP = $savedNoRustup; $env:TEST_NO_RUST = $null }
 
     $fixture = Join-Path $testRoot 'profile-invalid'
     $null = New-Item -ItemType Directory -Path $fixture
