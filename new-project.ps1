@@ -212,7 +212,8 @@ Write-Host "  1. cd $target"
 Write-Host '  2. Fill in PROJECT-CHARTER.md. Leave unknown answers as visible open decisions.'
 switch ($Stack) {
     'Python' { Write-Host '  3. uv init --app .   then   uv add --dev ruff pytest   (review the generated files)' }
-    'Rust' { Write-Host '  3. cargo init   (review the generated manifest and add rust-toolchain.toml deliberately)' }
+    # --vcs none: Git and .gitignore already exist; plain cargo init appends a second /target entry.
+    'Rust' { Write-Host '  3. cargo init --vcs none   (review the generated manifest and add rust-toolchain.toml deliberately)' }
     default { Write-Host '  3. Choose a stack, then replace the placeholders in scripts/check.ps1 with its commands.' }
 }
 Write-Host '  4. Replace the remaining {{...}} placeholders in AGENTS.md; the gate refuses to run'

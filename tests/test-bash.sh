@@ -695,6 +695,18 @@ result=0
 new_project --name winmixed --parent "$NP" --environment WINDOWS --stack RUST > "$TEST_ROOT/handoff-case.log" || result=$?
 [ "$result" -eq 3 ] && grep -q -- '-Environment Windows -Stack rust' "$TEST_ROOT/handoff-case.log" || fail 'upper-case Windows handoff failed'
 pass 'Scaffolder accepts environment and stack in any case'
+# The Rust next step keeps the scaffolder's single /target/ entry: plain cargo init
+# would append another. Cargo runs only where installed; it needs no network here.
+new_project --name rusty --parent "$NP" --environment linux --stack rust > "$TEST_ROOT/np-rust.log"
+grep -q 'cargo init --vcs none' "$TEST_ROOT/np-rust.log" || fail 'Rust next step does not use cargo init --vcs none'
+if command -v cargo >/dev/null 2>&1; then
+  (cd "$NP/rusty" && cargo init --vcs none --quiet) > "$TEST_ROOT/cargo-init.log" 2>&1 || fail 'cargo init --vcs none failed in a scaffolded project'
+  [ "$(grep -c 'target' "$NP/rusty/.gitignore")" -eq 1 ] && grep -qx '/target/' "$NP/rusty/.gitignore" \
+    || fail 'cargo init changed the scaffolded .gitignore'
+  pass 'Rust next step leaves one /target entry after cargo init'
+else
+  echo 'SKIP: cargo is not installed; cargo init not exercised'
+fi
 NP_OS=Darwin new_project --name macapp --parent "$NP" --windows-native no --linux-target yes > /dev/null
 grep -q 'Canonical development environment: MACOS' "$NP/macapp/PROJECT-CHARTER.md" || fail 'macOS environment not recorded'
 grep -q 'container or Linux VM' "$NP/macapp/PROJECT-CHARTER.md" || fail 'macOS Linux-target reason not recorded'

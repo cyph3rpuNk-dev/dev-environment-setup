@@ -286,7 +286,8 @@ Next steps:
 EOF
 case "$STACK" in
   python) echo "  3. uv init --app .   then   uv add --dev ruff pytest   (review the generated files)" ;;
-  rust)   echo "  3. cargo init   (review the generated manifest and add rust-toolchain.toml deliberately)" ;;
+  # --vcs none: Git and .gitignore already exist; plain cargo init appends a second /target entry.
+  rust)   echo "  3. cargo init --vcs none   (review the generated manifest and add rust-toolchain.toml deliberately)" ;;
   *)      echo "  3. Choose a stack, then replace the placeholders in scripts/check.sh with its commands." ;;
 esac
 cat <<EOF
