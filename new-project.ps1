@@ -64,6 +64,12 @@ if (-not $Name) { $Name = Read-Answer 'Name' 'Repository name (for example my-to
 if ($Name -notmatch '^[A-Za-z0-9_][A-Za-z0-9._-]*$') {
     Stop-NewProject "name must use letters, digits, '.', '_' or '-', and not start with '.' or '-'"
 }
+# Windows cannot hold these names (with any extension) or a trailing dot; it would
+# silently drop the dot or refuse the device name part-way through setup.
+if ($Name -match '^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)') {
+    Stop-NewProject "'$Name' is a reserved device name on Windows; choose another name"
+}
+if ($Name.EndsWith('.')) { Stop-NewProject "name must not end with '.'" }
 
 # --- Choose the environment -------------------------------------------------
 $reason = ''

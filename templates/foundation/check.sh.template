@@ -5,9 +5,9 @@
 # "Open decisions" in PROJECT-CHARTER.md; never substitute a command that always
 # succeeds.
 set -uo pipefail
-# Refuse to run until every placeholder is replaced, so an unfinished gate can
-# never report success.
-if grep -q '{{[A-Z_][A-Z_]*}}' "${BASH_SOURCE[0]}"; then
+# Refuse to run until the three command placeholders are replaced, so an unfinished
+# gate can never report success. Other {{...}} text in a real command is allowed.
+if grep -Eq '\{\{(FORMAT|LINT|TEST)_COMMAND\}\}' "${BASH_SOURCE[0]}"; then
   echo 'FAIL: replace the remaining {{...}} placeholders in this gate first.' >&2
   exit 1
 fi

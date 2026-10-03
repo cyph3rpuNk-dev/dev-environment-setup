@@ -25,7 +25,9 @@ charter. In a new or empty directory they create `README.md`, `PROJECT-CHARTER.m
 never commit and never overwrite. Run on the wrong side, they create nothing and print
 the command for the right one.
 
-Names cannot start with a dot or hyphen. Files and Git metadata are prepared in a
+Names cannot start with a dot or hyphen, end with a dot, or use a name Windows
+reserves for devices (`CON`, `PRN`, `AUX`, `NUL`, `COM0`-`COM9`, `LPT0`-`LPT9`, with or
+without an extension). Files and Git metadata are prepared in a
 private staging directory beside the destination, so Git detects that filesystem's
 capabilities. The parent directory is created if needed. Symlink
 and junction destinations are rejected. If preparation fails, the destination is

@@ -42,6 +42,14 @@ try {
     [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $template, $utf8)
     $output = & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" | Out-String
     Assert ($LASTEXITCODE -eq 1 -and $output -match 'placeholders') 'Unfilled PowerShell gate refuses to report success'
+    $gate = $template.Replace('{{FORMAT_COMMAND}}', "Write-Output 'formatted'").Replace('{{LINT_COMMAND}}', "Write-Output 'linted'")
+    [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $gate, $utf8)
+    $output = & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" | Out-String
+    Assert ($LASTEXITCODE -eq 1 -and $output -match 'placeholders') 'PowerShell gate with one placeholder left refuses to run'
+    $gate = $template.Replace('{{FORMAT_COMMAND}}', "Write-Output 'formatted'").Replace('{{LINT_COMMAND}}', "Write-Output 'linted'").Replace('{{TEST_COMMAND}}', "Write-Output '{{TEMPLATE_NAME}}'")
+    [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $gate, $utf8)
+    $output = & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" | Out-String
+    Assert ($LASTEXITCODE -eq 0 -and $output -match '\{\{TEMPLATE_NAME\}\}') 'PowerShell gate allows other {{...}} text in a filled command'
     $gate = $template.Replace('{{FORMAT_COMMAND}}', "Write-Output 'formatted'").Replace('{{LINT_COMMAND}}', "Write-Output 'linted'") -replace "(?m)^Step 'test'.*\r?\n", ''
     [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $gate, $utf8)
     & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" | Out-Null
@@ -435,6 +443,15 @@ exit $result
     Assert ($LASTEXITCODE -eq 1 -and -not (Test-Path (Join-Path $testRoot 'escape'))) 'Scaffolder rejects unsafe names'
     '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name '-dash' -Parent $np -Environment Windows | Out-Null
     Assert ($LASTEXITCODE -eq 1 -and -not (Test-Path (Join-Path $np '-dash'))) 'Scaffolder rejects option-shaped names'
+    # Test-Path is not used on reserved names: on Windows it can report the device itself.
+    foreach ($reserved in @('con', 'NUL', 'Com1', 'lpt9.txt', 'aux.tar.gz', 'name.')) {
+        $output = '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name $reserved -Parent $np -Environment Windows | Out-String
+        Assert ($LASTEXITCODE -eq 1 -and $output -match 'reserved device name|must not end') "Scaffolder rejects Windows-reserved name $reserved"
+    }
+    foreach ($ordinary in @('console', 'com10', 'nul-tools', 'v1.0')) {
+        '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name $ordinary -Parent $np -Environment Linux | Out-Null
+        Assert ($LASTEXITCODE -eq 3) "Scaffolder accepts ordinary name $ordinary"
+    }
     '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name Asks -Parent $np | Out-Null
     Assert ($LASTEXITCODE -eq 1 -and -not (Test-Path (Join-Path $np 'Asks'))) 'Scaffolder never guesses missing answers'
 

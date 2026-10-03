@@ -70,6 +70,13 @@ yes_no() { # normalise yes/no answers, rejecting anything else
 case "$NAME" in
   ''|.*|-*|*[!A-Za-z0-9._-]*) die "name must use letters, digits, '.', '_' or '-', and not start with '.' or '-'" ;;
 esac
+# Windows cannot hold these names (with any extension) or a trailing dot, so such a
+# repository could not be checked out there.
+NAME_LOWER=$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]')
+case "${NAME_LOWER%%.*}" in
+  con|prn|aux|nul|com[0-9]|lpt[0-9]) die "'$NAME' is a reserved device name on Windows; choose another name" ;;
+esac
+case "$NAME" in *.) die "name must not end with '.'" ;; esac
 case "$STACK" in none|rust|python) ;; *) die "unknown stack '$STACK' (none, rust, python)" ;; esac
 
 # --- Choose the environment -------------------------------------------------

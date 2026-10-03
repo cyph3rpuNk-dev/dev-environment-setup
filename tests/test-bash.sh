@@ -434,6 +434,18 @@ result=0
 bash "$TEST_ROOT/project/scripts/unfilled.sh" > "$TEST_ROOT/unfilled.log" 2>&1 || result=$?
 [ "$result" -eq 1 ] && grep -q 'placeholders' "$TEST_ROOT/unfilled.log" || fail 'unfilled gate did not refuse to run'
 pass 'Unfilled Bash gate refuses to report success'
+# One command placeholder left is still unfinished; other {{...}} text in a real command is not.
+sed -e 's/{{FORMAT_COMMAND}}/true/' -e 's/{{LINT_COMMAND}}/true/' \
+    "$ROOT/templates/foundation/check.sh.template" > "$TEST_ROOT/project/scripts/one-left.sh"
+result=0
+bash "$TEST_ROOT/project/scripts/one-left.sh" > "$TEST_ROOT/one-left.log" 2>&1 || result=$?
+[ "$result" -eq 1 ] && grep -q 'placeholders' "$TEST_ROOT/one-left.log" || fail 'gate with one placeholder left did not refuse'
+sed -e 's/{{FORMAT_COMMAND}}/true/' -e 's/{{LINT_COMMAND}}/true/' -e "s/{{TEST_COMMAND}}/printf '%s\\\\n' '{{TEMPLATE_NAME}}'/" \
+    "$ROOT/templates/foundation/check.sh.template" > "$TEST_ROOT/project/scripts/braces.sh"
+result=0
+bash "$TEST_ROOT/project/scripts/braces.sh" > "$TEST_ROOT/braces.log" 2>&1 || result=$?
+[ "$result" -eq 0 ] && grep -qx '{{TEMPLATE_NAME}}' "$TEST_ROOT/braces.log" || fail 'filled gate with {{...}} text in a command refused to run'
+pass 'Bash gate refuses only its own command placeholders'
 sed -e 's/{{FORMAT_COMMAND}}/true/' -e 's/{{LINT_COMMAND}}/true/' -e '/{{TEST_COMMAND}}/d' \
     "$ROOT/templates/foundation/check.sh.template" > "$TEST_ROOT/project/scripts/partial.sh"
 bash "$TEST_ROOT/project/scripts/partial.sh" > /dev/null 2>&1 || fail 'gate with a deleted step failed'
@@ -479,6 +491,17 @@ result=0; new_project --name ../escape --parent "$NP" --environment linux > /dev
 [ "$result" -eq 1 ] && [ ! -e "$TEST_ROOT/escape" ] || fail 'unsafe name accepted'
 result=0; new_project --name -dash --parent "$NP" --environment linux > /dev/null 2>&1 || result=$?
 [ "$result" -eq 1 ] && [ ! -e "$NP/-dash" ] || fail 'option-shaped name accepted'
+# Names Windows cannot hold are refused; similar ordinary names still pass validation.
+for reserved in con NUL Com1 lpt9.txt aux.tar.gz name.; do
+  result=0; new_project --name "$reserved" --parent "$NP" --environment linux > "$TEST_ROOT/reserved.log" 2>&1 || result=$?
+  [ "$result" -eq 1 ] && [ ! -e "$NP/$reserved" ] && grep -Eq 'reserved device name|must not end' "$TEST_ROOT/reserved.log" \
+    || fail "Windows-reserved name accepted: $reserved"
+done
+for ordinary in console com10 nul-tools v1.0; do
+  result=0; new_project --name "$ordinary" --parent "$NP" --environment windows > /dev/null 2>&1 || result=$?
+  [ "$result" -eq 3 ] || fail "ordinary name rejected: $ordinary"
+done
+pass 'Scaffolder refuses names Windows reserves and accepts similar ordinary names'
 result=0; new_project --name asks --parent "$NP" > /dev/null 2>&1 || result=$?
 [ "$result" -eq 1 ] && [ ! -e "$NP/asks" ] || fail 'missing answers were guessed'
 result=0; NP_KERNEL=wsl new_project --name onwindows --parent /mnt/c/src --environment linux > /dev/null 2>&1 || result=$?

@@ -26,7 +26,8 @@ or `pwsh -NoProfile -File scripts/check.ps1` on PowerShell 7. Both invoke the sa
 offline gate used by CI. Bash is required; Git for Windows is supported.
 Report unavailable platform checks honestly. Do not claim CI passed before it runs.
 
-The local gate checks syntax, configuration, regression fixtures, and whitespace.
+The local gate checks syntax, configuration, regression fixtures, and whitespace,
+and runs ShellCheck and PSScriptAnalyzer when they are installed.
 CI additionally runs platform and distribution jobs and separately checks actual
 commit history with `scripts/check-commit-identity.sh`. The local gate's identity
 regression tests use fixtures; they do not validate this checkout's commit history.
