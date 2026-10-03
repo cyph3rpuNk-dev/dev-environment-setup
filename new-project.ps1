@@ -58,8 +58,8 @@ function ConvertTo-WslPath ([string]$WindowsPath) {
 }
 
 if (-not $Name) { $Name = Read-Answer 'Name' 'Repository name (for example my-tool)' }
-if ($Name -notmatch '^[A-Za-z0-9_-][A-Za-z0-9._-]*$') {
-    Stop-NewProject "name must use letters, digits, '.', '_' or '-', and not start with '.'"
+if ($Name -notmatch '^[A-Za-z0-9_][A-Za-z0-9._-]*$') {
+    Stop-NewProject "name must use letters, digits, '.', '_' or '-', and not start with '.' or '-'"
 }
 
 # --- Choose the environment -------------------------------------------------

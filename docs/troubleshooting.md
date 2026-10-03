@@ -126,8 +126,9 @@ Pushing files under `.github/workflows` needs a scope a default login omits:
 
 ### "GitHub CLI is not authenticated" although you logged in
 
-Distribution builds of `gh` older than 2.40 (for example on Ubuntu 22.04 and Debian 12)
-do not know `--active`. `bootstrap-linux.sh` detects this and warns; install a current
+Older distribution builds of `gh` may not know `--active`. Both bootstraps support
+these builds, but cannot verify the active account's workflow scope without the flag.
+The Linux bootstrap detects this and warns; install a current
 build from <https://github.com/cli/cli/blob/trunk/docs/install_linux.md>.
 
 ### `cargo` or `uv` is not found after installing
@@ -139,6 +140,12 @@ terminals. Open one, or run `. "$HOME/.cargo/env"` / `. "$HOME/.local/bin/env"`.
 
 `bootstrap-linux.sh` automates dnf and apt. On other distributions it checks tools by
 command name; install what it reports with your package manager and rerun.
+
+If a RHEL-family system has no `dnf` (for example Amazon Linux 2), it also falls back
+to command checks. On dnf systems, GitHub CLI is installed separately so a missing
+`gh` repository does not prevent installing curl, Git or compiler packages. Follow
+[GitHub's RPM installation instructions](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)
+for your package-manager version, then rerun; the toolkit does not add repositories.
 
 ## Agents and editors
 

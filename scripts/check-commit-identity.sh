@@ -35,7 +35,7 @@ while IFS= read -r sha; do
     echo "FAIL $label: committer $(git log -1 --format='%cn <%ce>' "$sha") is not allowed"
     failures=$((failures + 1))
   fi
-  if git log -1 --format=%B "$sha" | grep -qiE '^(co-authored-by|claude-session):|generated with \[?claude code'; then
+  if git log -1 --format=%B "$sha" | grep -qiE '^[[:space:]]*(co-authored-by|[a-z0-9_-]+-session|generated-by):|^[[:space:]]*generated (with|by)[[:space:]]'; then
     echo "FAIL $label: message contains a co-author or attribution line"
     failures=$((failures + 1))
   fi

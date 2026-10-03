@@ -155,7 +155,7 @@ report `ok`.
 - `--no-sudo` skips system packages and reports them as failures instead.
 - Other distributions are detected and checked by command name; install the reported
   packages yourself.
-- If it warns that GitHub CLI is older than 2.40 (common on Ubuntu 22.04 and Debian 12),
+- If it warns that GitHub CLI lacks `--active` (older distribution builds),
   install a current build from GitHub's official instructions it links to.
 
 **VS Code on Linux.** On native Linux install VS Code from
@@ -172,6 +172,10 @@ browser (it needs `sudo` and preserves any existing custom handler):
 bash bootstrap-linux.sh --install-browser-bridge
 export BROWSER=/usr/local/bin/wslview      # or open a new login shell
 ```
+
+If `wslview` already exists elsewhere on PATH, the installer preserves it and stops;
+use that handler instead. An existing `xdg-open` anywhere on PATH is left in place,
+including its support for opening local files.
 
 ---
 
@@ -259,6 +263,12 @@ the official page.
 |---|---|---|---|
 | Claude Code | `irm https://claude.ai/install.ps1 \| iex` | `curl -fsSL https://claude.ai/install.sh \| bash` | <https://code.claude.com/docs/en/setup> |
 | Codex CLI | `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"` | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` | <https://github.com/openai/codex> |
+
+These are vendor-provided streaming installation commands, a deliberate exception
+to the bootstrap scripts' download-completely-before-execution rule. To follow the
+same rule manually, save the official installer to a private temporary file, check
+that the download succeeded, inspect it, then run it with the indicated interpreter.
+Never execute a partial or failed download.
 
 Open a new terminal, confirm with `claude --version` / `claude doctor` and
 `codex --version`, then run `claude` and `codex` once each to sign in. Signing in on

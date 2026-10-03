@@ -68,7 +68,7 @@ yes_no() { # normalise yes/no answers, rejecting anything else
 
 [ -n "$NAME" ] || ask NAME "Repository name (for example my-tool):"
 case "$NAME" in
-  ''|.*|*[!A-Za-z0-9._-]*) die "name must use letters, digits, '.', '_' or '-', and not start with '.'" ;;
+  ''|.*|-*|*[!A-Za-z0-9._-]*) die "name must use letters, digits, '.', '_' or '-', and not start with '.' or '-'" ;;
 esac
 case "$STACK" in none|rust|python) ;; *) die "unknown stack '$STACK' (none, rust, python)" ;; esac
 
@@ -182,9 +182,11 @@ render() { # render TEMPLATE OUTPUT KEY VALUE ...
   done
 }
 
-# Prepare away from the destination. Never recursively delete a user-selected path.
+# Stage beside the destination so Git probes the destination filesystem.
+# Never recursively delete a user-selected path.
 DESTINATION=$TARGET
-STAGING=$(mktemp -d) || die "cannot create a private staging directory"
+mkdir -p -- "$PARENT" || die "cannot create parent directory"
+STAGING=$(mktemp -d "$PARENT/.devsetup-stage.XXXXXXXX") || die "cannot create a private staging directory"
 STAGING=$(cd -P -- "$STAGING" && pwd -P) || die "cannot resolve staging directory"
 TARGET="$STAGING/project"
 CREATED=0

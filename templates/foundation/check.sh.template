@@ -22,8 +22,12 @@ step() {
   "$@" || failures=$((failures + 1))
 }
 
+# Placeholders are literal template markers replaced with commands by the scaffolder.
+# shellcheck disable=SC1083
 step "format" {{FORMAT_COMMAND}}
+# shellcheck disable=SC1083
 step "lint" {{LINT_COMMAND}}
+# shellcheck disable=SC1083
 step "test" {{TEST_COMMAND}}
 # Add security or packaging checks only after verifying their policy inputs.
 

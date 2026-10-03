@@ -116,7 +116,7 @@ run_downloaded_installer() {
 if [ "$IS_MACOS" = 1 ] && ! have brew; then
   for candidate in ${DEVSETUP_BREW_CANDIDATES:-/opt/homebrew/bin/brew /usr/local/bin/brew}; do
     if [ -x "$candidate" ]; then
-      eval "$("$candidate" shellenv)"
+      add_path_dir "${candidate%/*}"
       BREW_NOT_ON_PATH="$candidate"
       break
     fi
@@ -142,6 +142,12 @@ if [ "$IS_MACOS" = 1 ]; then
     fi
   fi
 else
+  PKG_COMMAND=$PKG_MGR
+  [ "$PKG_MGR" != apt ] || PKG_COMMAND=apt-get
+  if [ "$PKG_MGR" != none ] && ! have "$PKG_COMMAND"; then
+    warn "$PKG_MGR is unavailable; install packages manually on this distribution"
+    PKG_MGR=none
+  fi
   case "$PKG_MGR" in
     none) warn "unsupported distribution '${DISTRO_ID:-unknown}': packages are checked by command name only; install them yourself" ;;
     *) ok "package manager: $PKG_MGR" ;;
@@ -187,7 +193,18 @@ else
     # MISSING is a space-separated list of package names.
     # shellcheck disable=SC2086
     case "$PKG_MGR" in
-      dnf) sudo dnf install -y $MISSING ;;
+      dnf)
+        # gh may require an extra repository. Do not let it block base tools.
+        local base_missing="" need_gh=0 install_failed=0 package
+        for package in $MISSING; do
+          if [ "$package" = gh ]; then need_gh=1; else base_missing="$base_missing $package"; fi
+        done
+        if [ -n "$base_missing" ]; then sudo dnf install -y $base_missing || install_failed=1; fi
+        if [ "$need_gh" = 1 ] && ! sudo dnf install -y gh; then
+          warn "GitHub CLI may need its official RPM repository: https://github.com/cli/cli/blob/trunk/docs/install_linux.md"
+          install_failed=1
+        fi
+        return "$install_failed" ;;
       apt) sudo apt-get update && sudo apt-get install -y $MISSING ;;
       brew) brew install $MISSING ;;   # Homebrew never needs sudo
     esac
@@ -200,19 +217,11 @@ else
   fi
 fi
 
-# gh 2.40 added --active. Older distribution builds (for example Ubuntu 22.04 and
-# Debian 12) reject the flag, which would otherwise read as "not authenticated".
+# Probe the supported option rather than assuming a particular release boundary.
 GH_ACTIVE=1
-if have gh; then
-  GH_VERSION=$(gh --version 2>/dev/null | head -n 1 | awk '{print $3}')
-  GH_MAJOR=${GH_VERSION%%.*}; GH_REST=${GH_VERSION#*.}; GH_MINOR=${GH_REST%%.*}
-  case "$GH_MAJOR$GH_MINOR" in
-    ''|*[!0-9]*) ;;
-    *) if [ "$GH_MAJOR" -lt 2 ] || { [ "$GH_MAJOR" -eq 2 ] && [ "$GH_MINOR" -lt 40 ]; }; then
-         GH_ACTIVE=0
-         warn "GitHub CLI $GH_VERSION is older than 2.40; for a current build see https://github.com/cli/cli/blob/trunk/docs/install_linux.md"
-       fi ;;
-  esac
+if have gh && ! gh auth status --help 2>/dev/null | grep -q -- '--active'; then
+  GH_ACTIVE=0
+  warn "GitHub CLI lacks --active; for a current build see https://github.com/cli/cli/blob/trunk/docs/install_linux.md"
 fi
 gh_authenticated() {
   if [ "$GH_ACTIVE" = 1 ]; then gh auth status --hostname github.com --active >/dev/null 2>&1
@@ -231,7 +240,7 @@ fi
 if have rustup; then
   ok "rustup $(rustup --version 2>/dev/null | head -1)"
 elif [ "$CHECK_ONLY" = 1 ]; then
-  warn "rustup not installed"
+  bad "rustup not installed"
 else
   echo "  installing rustup from https://rustup.rs ..."
   # rustup adds ~/.cargo/bin to the shell profile so new terminals find cargo.
@@ -450,17 +459,25 @@ if [ "$GITHUB_AUTHENTICATED" = 1 ]; then
   # Pushing a repository containing .github/workflows requires the "workflow" scope,
   # which a default login does not request. The remote rejects the push with a
   # message naming the scope rather than the fix.
-  if gh auth status --hostname github.com 2>&1 | grep -q "workflow"; then
-    ok "token has the workflow scope"
+  GH_SCOPES=""
+  if [ "$GH_ACTIVE" = 1 ] && GH_STATUS=$(gh auth status --hostname github.com --active 2>&1); then
+    GH_SCOPES=$(printf '%s\n' "$GH_STATUS" | sed -n 's/^[[:space:]]*- Token scopes:[[:space:]]*//p')
+  fi
+  if [ -z "$GH_SCOPES" ]; then
+    warn "workflow permission could not be determined (older CLI or token without classic scopes); check repository permissions before pushing workflows"
+  elif printf '%s\n' "$GH_SCOPES" | tr -d "' " | tr ',' '\n' | grep -qx workflow; then
+    ok "active token has the workflow scope"
   else
-    warn "token lacks the 'workflow' scope; pushing .github/workflows will be rejected"
+    warn "active classic token lacks the 'workflow' scope"
     warn "  fix: gh auth refresh --hostname github.com --scopes workflow"
   fi
 fi
 
-if grep -q 'GITHUB_MCP_PAT' "$HOME/.bashrc" 2>/dev/null; then
-  warn "Legacy GITHUB_MCP_PAT entry detected in ~/.bashrc. Remove it after GitHub CLI authentication is working."
-fi
+for profile in .bashrc .bash_profile .zshrc .zprofile .profile; do
+  if grep -q 'GITHUB_MCP_PAT' "$HOME/$profile" 2>/dev/null; then
+    warn "Legacy GITHUB_MCP_PAT entry detected in ~/$profile. Remove it after GitHub CLI authentication is working."
+  fi
+done
 
 # ---------------------------------------------------------------------------
 if [ "$CONFIGURE_AGENTS" = 1 ]; then
@@ -472,14 +489,14 @@ if ! have claude; then
 elif [ "$CHECK_ONLY" = 1 ]; then
   skip "not adding MCP servers"
 else
-  if claude mcp list 2>/dev/null | grep -q context7; then
+  if claude mcp get context7 >/dev/null 2>&1; then
     ok "claude: context7 already configured"
   else
     claude mcp add --transport http --scope user context7 https://mcp.context7.com/mcp \
       && ok "claude: context7 added" || bad "claude: could not add context7"
   fi
 
-  if claude mcp list 2>/dev/null | grep -q github; then
+  if claude mcp get github >/dev/null 2>&1; then
     ok "claude: github already configured"
   else
     skip "claude: github is optional and is not configured automatically; see docs/agents.md"

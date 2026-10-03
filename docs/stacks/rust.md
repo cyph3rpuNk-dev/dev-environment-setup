@@ -32,7 +32,7 @@ On macOS, `bash bootstrap-macos.sh --stack=rust` uses the same rustup installer 
 missing, the bootstrap fails with `xcode-select --install`, which opens a system dialog
 and is left to you.
 
-Every platform offers cargo-nextest, cargo-audit, cargo-deny, bacon and typos; Linux
+Every platform offers cargo-nextest, cargo-audit, cargo-deny, bacon and typos; Linux and macOS
 also includes cargo-machete. They are installed with `cargo-binstall` (prebuilt
 binaries) when possible and built from source otherwise.
 
