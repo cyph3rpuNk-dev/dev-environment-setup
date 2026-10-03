@@ -1,30 +1,50 @@
 name: Validate setup toolkit
+# Pull requests and main are checked; a branch push with an open pull request no
+# longer runs the same jobs twice. Run manually to check a branch without one.
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   check:
+    # Keep the job names that required status checks refer to; pssa is not part of them.
+    name: check (${{ matrix.os }}, ${{ matrix.shell }})
     strategy:
       fail-fast: false
       matrix:
         include:
+          # PSScriptAnalyzer runs once, pinned, on Linux. Other runner images may ship
+          # a different analyzer version, so the gate skips it there.
           - os: windows-latest
             shell: powershell
+            pssa: skip
           - os: windows-latest
             shell: pwsh
+            pssa: skip
           - os: ubuntu-latest
             shell: pwsh
+            pssa: 1.23.0
           # macOS runs the same gate with its own Bash 3.2 and BSD tools.
           - os: macos-latest
             shell: pwsh
+            pssa: skip
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    env:
+      DEVSETUP_PSSA_VERSION: ${{ matrix.pssa }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install pinned PSScriptAnalyzer
+        if: matrix.pssa != 'skip'
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name PSScriptAnalyzer -RequiredVersion $env:DEVSETUP_PSSA_VERSION -Repository PSGallery -Scope CurrentUser
       - name: Run offline gate with Windows PowerShell
         if: matrix.shell == 'powershell'
         shell: powershell

@@ -7,9 +7,18 @@ somewhere other than their cause.
 
 ### A downloaded script is blocked
 
-PowerShell marks files downloaded from the internet. Inspect the script, then remove
-the mark from that one file: `Unblock-File .\bootstrap-windows.ps1`. Do not change the
-machine-wide execution policy to work around it.
+Windows marks files downloaded from the internet, and files extracted from a downloaded
+ZIP can keep that mark. `bootstrap-windows.ps1` and `helpers\codex-with-github-mcp.ps1`
+both load `helpers\github-auth.ps1`, so inspect the script you run and that helper,
+then remove the mark from those files only:
+
+```powershell
+Unblock-File .\bootstrap-windows.ps1, .\helpers\github-auth.ps1
+```
+
+If the helper is still blocked, the bootstrap reports `GitHub sign-in was not checked:
+could not load ...github-auth.ps1` and prints the `Unblock-File` command for that file.
+Do not change the machine-wide execution policy to work around it.
 
 ### A tool was installed but is "not recognized"
 

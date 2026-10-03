@@ -31,7 +31,13 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-. (Join-Path $PSScriptRoot 'helpers/github-auth.ps1')
+# Files extracted from a downloaded ZIP can keep Windows' "blocked" mark, and a
+# blocked helper refuses to load. Record that so the GitHub section can name the
+# file instead of misreporting it as a sign-in problem.
+$githubAuthHelper = Join-Path (Join-Path $PSScriptRoot 'helpers') 'github-auth.ps1'
+$githubAuthLoadError = $null
+try { . $githubAuthHelper }
+catch { $githubAuthLoadError = $_.Exception.Message }
 $script:Failures = 0
 if ($Doctor) { $Check = $true }
 # 'powershell -File' passes "-Stack Rust,Python" as one string, so split commas here
@@ -383,7 +389,11 @@ Say "7. GitHub credentials"
 # configuration is an explicit manual choice because it stores an authorization
 # header in Claude's user-scoped MCP configuration.
 $githubAuthenticated = $false
-if (Have 'gh') {
+if ($githubAuthLoadError) {
+    Bad "GitHub sign-in was not checked: could not load $githubAuthHelper ($githubAuthLoadError)"
+    Warn "  if the toolkit came from a downloaded ZIP, inspect that file, then run: Unblock-File -LiteralPath '$githubAuthHelper'"
+}
+elseif (Have 'gh') {
     $auth = Get-GitHubAuthStatus
     if ($auth.Authenticated) {
         Ok "GitHub CLI is authenticated"

@@ -7,7 +7,12 @@ param([Parameter(ValueFromRemainingArguments = $true)][string[]]$CodexArgs)
 $ErrorActionPreference = 'Stop'
 # Preserve the child's exit status even if the caller enabled PS 7 native errors.
 $PSNativeCommandUseErrorActionPreference = $false
-. (Join-Path $PSScriptRoot 'github-auth.ps1')
+$githubAuthHelper = Join-Path $PSScriptRoot 'github-auth.ps1'
+try { . $githubAuthHelper }
+catch {
+    # A file extracted from a downloaded ZIP can keep Windows' "blocked" mark.
+    throw "Could not load $githubAuthHelper ($($_.Exception.Message)). If the toolkit came from a downloaded ZIP, inspect that file, then run: Unblock-File -LiteralPath '$githubAuthHelper'"
+}
 if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
     throw "Codex CLI is required. Install it before using this helper."
 }

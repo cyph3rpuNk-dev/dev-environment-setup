@@ -75,8 +75,9 @@ cd ~/dev-environment-setup
 ```
 
 Without Git, use GitHub's **Code > Download ZIP** and extract it to the same place.
-If Windows reports a downloaded script as blocked, inspect it, then run
-`Unblock-File` on that file only.
+Files extracted from a downloaded ZIP can be marked as blocked. The Windows scripts
+load `helpers\github-auth.ps1`, so inspect it together with the script you run, then
+unblock both, for example `Unblock-File .\bootstrap-windows.ps1, .\helpers\github-auth.ps1`.
 
 ## Quick start
 
@@ -171,11 +172,13 @@ credential lifetime, gate and placeholder failures, browser input handling,
 linker-probe failures, WSL enablement decisions, the scaffolder, and mocked
 first-run/rerun/doctor behavior on Fedora, Debian/Ubuntu, native Linux, WSL and
 macOS fixtures. Tests use temporary fixtures and fake credentials. They do not install
-software or access real agent accounts.
+software or access real agent accounts. ShellCheck and PSScriptAnalyzer run when
+installed; the analyzer uses `PSScriptAnalyzerSettings.psd1`.
 
-CI runs the same gate with Windows PowerShell 5.1, Windows PowerShell 7, Linux
-PowerShell 7 and macOS PowerShell 7 (with macOS's Bash 3.2), and runs the Bash tests
-inside Fedora and Debian containers. These tests
+CI runs on pull requests, on pushes to `main`, and on manual dispatch. It runs the same
+gate with Windows PowerShell 5.1, Windows PowerShell 7, Linux PowerShell 7 and macOS
+PowerShell 7 (with macOS's Bash 3.2), with PSScriptAnalyzer pinned on Linux, and runs
+ShellCheck and the Bash tests inside Fedora and Debian containers. These tests
 do not prove that winget, Homebrew, distribution packages, WSL enablement or live authentication
 work on a fresh machine. Use the doctor and manual checks for those boundaries.
 

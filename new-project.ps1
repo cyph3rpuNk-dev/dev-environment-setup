@@ -33,7 +33,10 @@ $ErrorActionPreference = 'Stop'
 $templates = Join-Path (Join-Path $PSScriptRoot 'templates') 'foundation'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
-function Stop-NewProject ([string]$Message) {
+function Stop-NewProject {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Reports an error and exits; it changes no system state.')]
+    param([string]$Message)
     Write-Host "new-project: $Message" -ForegroundColor Red
     exit 1
 }
