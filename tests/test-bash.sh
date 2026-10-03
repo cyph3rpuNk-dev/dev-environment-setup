@@ -38,6 +38,64 @@ cmp -s "$ROOT/helpers/wslview.sh" "$TEST_ROOT/bin/wslview" || fail 'legacy upgra
 pass 'Exact legacy bridge upgrades to the safe implementation'
 if bash "$ROOT/helpers/wslview.sh" 'file:///sensitive'; then fail 'non-web URL accepted'; fi
 pass 'Bash bridge rejects non-web URLs before invoking Windows'
+# The bridge finds powershell.exe on PATH when it is not at the usual /mnt/c path.
+# A fake records what it receives; the real one is never reachable here.
+mkdir -p "$TEST_ROOT/fake-windows"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" > "%s/ps-args"\ncat > "%s/ps-stdin"\n' "$TEST_ROOT" "$TEST_ROOT" > "$TEST_ROOT/fake-windows/powershell.exe"
+chmod +x "$TEST_ROOT/fake-windows/powershell.exe"
+env PATH="$TEST_ROOT/fake-windows:/usr/bin:/bin" DEVSETUP_WSL_POWERSHELL="$TEST_ROOT/no-powershell.exe" \
+  bash "$ROOT/helpers/wslview.sh" 'https://example.invalid/a?b=1' || fail 'bridge did not use powershell.exe from PATH'
+grep -q -- '-NoProfile -NonInteractive -Command' "$TEST_ROOT/ps-args" || fail 'bridge did not run the fixed PowerShell command'
+[ "$(base64 -d < "$TEST_ROOT/ps-stdin" 2>/dev/null || base64 -D < "$TEST_ROOT/ps-stdin")" = 'https://example.invalid/a?b=1' ] || fail 'bridge did not pass the URL as base64 data'
+result=0
+env PATH="/usr/bin:/bin" DEVSETUP_WSL_POWERSHELL="$TEST_ROOT/no-powershell.exe" \
+  bash "$ROOT/helpers/wslview.sh" 'https://example.invalid/' > "$TEST_ROOT/no-ps.log" 2>&1 || result=$?
+[ "$result" -eq 1 ] && grep -q 'powershell.exe was not found' "$TEST_ROOT/no-ps.log" || fail 'missing powershell.exe not reported'
+pass 'Bridge finds powershell.exe on PATH and reports when it is missing'
+# The previous (v2) bridge is an earlier toolkit version, so it upgrades in place.
+mkdir -p "$TEST_ROOT/v2-bin" "$TEST_ROOT/v2-profile"
+cp "$ROOT/tests/fixtures/wslview-v2.sh" "$TEST_ROOT/v2-bin/wslview"
+chmod +x "$TEST_ROOT/v2-bin/wslview"
+if ! PATH="$TEST_ROOT/v2-bin:$PATH" install_browser_bridge "$ROOT/helpers/wslview.sh" "$TEST_ROOT/v2-bin" "$TEST_ROOT/v2-profile"; then
+  fail 'v2 bridge was not upgraded'
+fi
+cmp -s "$ROOT/helpers/wslview.sh" "$TEST_ROOT/v2-bin/wslview" || fail 'v2 bridge was not replaced with the current bridge'
+# The fixture's bytes are pinned, so it cannot drift from what was shipped as v2.
+if command -v sha256sum >/dev/null 2>&1; then v2_sum=$(sha256sum < "$ROOT/tests/fixtures/wslview-v2.sh")
+else v2_sum=$(shasum -a 256 < "$ROOT/tests/fixtures/wslview-v2.sh"); fi
+[ "${v2_sum%% *}" = 4fc721bf180d8e55dfd7389d9f673a20783e9e708ab7d990292810ff6b9faf0b ] || fail 'v2 bridge fixture bytes changed'
+pass 'Previous toolkit bridge upgrades to the current version'
+# Drive mount root parsing for WSL, from /etc/wsl.conf or its fixture override.
+# shellcheck source=helpers/wsl-paths.sh
+. "$ROOT/helpers/wsl-paths.sh"
+check_root() { # check_root EXPECTED CONF_TEXT
+  printf '%b' "$2" > "$TEST_ROOT/wsl.conf"
+  [ "$(DEVSETUP_WSL_CONF="$TEST_ROOT/wsl.conf" wsl_drive_root)" = "$1" ] || fail "wsl.conf root not parsed as $1: $2"
+}
+[ "$(DEVSETUP_WSL_CONF="$TEST_ROOT/missing.conf" wsl_drive_root)" = /mnt/ ] || fail 'missing wsl.conf did not default to /mnt/'
+check_root /windows/ '[automount]\nroot = /windows/\n'
+check_root /x/ '[AutoMount]\n  Root=/x\n'
+check_root / '[automount]\nenabled = true\nroot = "/"  # drives at /c\n'
+check_root /mnt/ '[network]\nroot = /elsewhere/\n'
+check_root /mnt/ '[automount]\nroot = relative/\n'
+check_root /first/ '[automount]\nroot = /first/\nroot = /second/\n'
+DEVSETUP_WSL_CONF="$TEST_ROOT/missing.conf" wsl_is_windows_path /mnt/c/Users || fail '/mnt/c not recognized as a Windows drive'
+DEVSETUP_WSL_CONF="$TEST_ROOT/missing.conf" wsl_is_windows_path /mnt/d || fail '/mnt/d not recognized as a Windows drive'
+if DEVSETUP_WSL_CONF="$TEST_ROOT/missing.conf" wsl_is_windows_path /mnt/wsl/shared; then fail '/mnt/wsl mistaken for a Windows drive'; fi
+if DEVSETUP_WSL_CONF="$TEST_ROOT/missing.conf" wsl_is_windows_path /home/me/src; then fail 'Linux path mistaken for a Windows drive'; fi
+# A configured root reached through a symlink still matches resolved paths, as on
+# macOS where the temporary directory itself is a symlink.
+# Git Bash may copy instead of linking; then the case is skipped and the copy removed.
+mkdir -p "$TEST_ROOT/real-root/c/x"
+if ln -s "$TEST_ROOT/real-root" "$TEST_ROOT/link-root" 2>/dev/null && [ -L "$TEST_ROOT/link-root" ]; then
+  printf '[automount]\nroot = %s/\n' "$TEST_ROOT/link-root" > "$TEST_ROOT/link-root.conf"
+  real_drive=$(cd -P -- "$TEST_ROOT/real-root/c/x" && pwd -P)
+  DEVSETUP_WSL_CONF="$TEST_ROOT/link-root.conf" wsl_is_windows_path "$real_drive" || fail 'resolved drive path not matched through a symlinked root'
+else
+  rm -rf -- "$TEST_ROOT/link-root"
+  echo 'SKIP: host cannot create a real symbolic link; symlinked mount root not exercised'
+fi
+pass 'WSL drive mount root is read from wsl.conf and drives are recognized precisely'
 mkdir -p "$TEST_ROOT/system-bin" "$TEST_ROOT/local-bin" "$TEST_ROOT/new-profile"
 printf '#!/bin/sh\nexit 0\n' > "$TEST_ROOT/system-bin/xdg-open"
 chmod +x "$TEST_ROOT/system-bin/xdg-open"
@@ -160,6 +218,7 @@ run_bootstrap() {
   env HOME="$TEST_ROOT/user" PATH="$TEST_ROOT/mock-bin:$TEST_ROOT/utilities" \
     DEVSETUP_OS_RELEASE="$TEST_ROOT/os/$os" DEVSETUP_PROC_VERSION="$TEST_ROOT/os/$kernel" \
     DEVSETUP_KERNEL="${TEST_KERNEL:-Linux}" DEVSETUP_BREW_CANDIDATES="${TEST_BREW_CANDIDATES:-$TEST_ROOT/no-such-brew}" \
+    DEVSETUP_WSL_CONF="${TEST_WSL_CONF:-$TEST_ROOT/no-wsl.conf}" DEVSETUP_WSL_POWERSHELL="$TEST_ROOT/no-powershell.exe" \
     bash "$ROOT/bootstrap-linux.sh" "$@"
 }
 
@@ -243,6 +302,31 @@ for mode in --check --install-browser-bridge; do
 done
 rm -f -- "$TEST_ROOT/mock-bin/wslview"
 pass 'An existing wslview on PATH is reported as working and left unchanged'
+# Installation looks for powershell.exe the same way the bridge does. Privileged
+# writes stay blocked by the sudo mock, so the run stops at installation.
+result=0
+run_bootstrap fedora wsl --install-browser-bridge > "$TEST_ROOT/no-ps-bridge.log" 2>&1 || result=$?
+[ "$result" -ne 0 ] && grep -q 'powershell.exe not reachable' "$TEST_ROOT/no-ps-bridge.log" || fail 'missing powershell.exe not reported before installation'
+cp "$TEST_ROOT/mock-bin/mock" "$TEST_ROOT/mock-bin/powershell.exe"
+chmod +x "$TEST_ROOT/mock-bin/powershell.exe"
+run_bootstrap fedora wsl --install-browser-bridge > "$TEST_ROOT/path-ps-bridge.log" 2>&1 || true
+if grep -q 'powershell.exe not reachable' "$TEST_ROOT/path-ps-bridge.log"; then fail 'powershell.exe on PATH was not found'; fi
+grep -q 'browser bridge installation failed' "$TEST_ROOT/path-ps-bridge.log" || fail 'installation was not attempted with powershell.exe on PATH'
+rm -f -- "$TEST_ROOT/mock-bin/powershell.exe"
+pass 'Bridge installation finds powershell.exe on PATH'
+# The doctor's project-location check follows a drive mount root moved by wsl.conf.
+mkdir -p "$TEST_ROOT/doctor-win/c/projects"
+printf '[automount]\nroot = %s/\n' "$TEST_ROOT/doctor-win" > "$TEST_ROOT/doctor-wsl.conf"
+if ln -s "$TEST_ROOT/doctor-win/c/projects" "$TEST_ROOT/user/src" 2>/dev/null && [ -L "$TEST_ROOT/user/src" ]; then
+  TEST_WSL_CONF="$TEST_ROOT/doctor-wsl.conf" run_bootstrap fedora wsl --doctor > "$TEST_ROOT/doctor-moved.log" || true
+  grep -q 'on the Windows filesystem' "$TEST_ROOT/doctor-moved.log" || fail 'doctor missed a project folder on a moved Windows drive'
+  rm -f -- "$TEST_ROOT/user/src"
+  pass 'Doctor follows the configured drive mount root'
+else
+  # Git Bash may copy instead of linking; remove the copy so later cases start clean.
+  rm -rf -- "$TEST_ROOT/user/src"
+  echo 'SKIP: host cannot create a real symbolic link; moved-root doctor case not exercised'
+fi
 
 # Native Linux must not need or touch anything WSL-specific.
 : > "$TEST_EVENTS"
@@ -457,7 +541,10 @@ pass 'Bash gate allows deleting a step but refuses to pass with none'
 
 # Scaffolder: real git in a temporary parent; stdin is never a terminal here.
 NP="$TEST_ROOT/np"
-new_project() { env DEVSETUP_KERNEL="${NP_OS:-Linux}" DEVSETUP_PROC_VERSION="$TEST_ROOT/os/${NP_KERNEL:-native}" bash "$ROOT/new-project.sh" "$@" < /dev/null; }
+new_project() {
+  env DEVSETUP_KERNEL="${NP_OS:-Linux}" DEVSETUP_PROC_VERSION="$TEST_ROOT/os/${NP_KERNEL:-native}" \
+    DEVSETUP_WSL_CONF="${NP_WSL_CONF:-$TEST_ROOT/no-wsl.conf}" bash "$ROOT/new-project.sh" "$@" < /dev/null
+}
 new_project --name demo --parent "$NP" --windows-native no --linux-target yes --stack python > "$TEST_ROOT/np.log"
 for f in README.md PROJECT-CHARTER.md AGENTS.md CLAUDE.md scripts/check.sh .gitattributes .gitignore .editorconfig; do
   [ -f "$NP/demo/$f" ] || fail "scaffolder did not create $f"
@@ -507,15 +594,28 @@ result=0; new_project --name asks --parent "$NP" > /dev/null 2>&1 || result=$?
 result=0; NP_KERNEL=wsl new_project --name onwindows --parent /mnt/c/src --environment linux > /dev/null 2>&1 || result=$?
 [ "$result" -eq 1 ] || fail 'WSL project accepted on the Windows filesystem'
 pass 'Scaffolder refuses the wrong platform, existing projects, unsafe names, guesses and /mnt in WSL'
-# The WSL guard judges the real location, not the spelling of the path.
-if [ -d /mnt ]; then
-  ln -s /mnt "$NP/winlink"
-  result=0; NP_KERNEL=wsl new_project --name vialink --parent "$NP/winlink" --environment linux > /dev/null 2>&1 || result=$?
-  [ "$result" -eq 1 ] || fail 'WSL project accepted through a symlink into /mnt'
+# The WSL guard judges the real location, not the spelling of the path, and follows
+# a drive mount root moved by /etc/wsl.conf. Drives are fixture directories here.
+WINROOT="$TEST_ROOT/winroot"
+mkdir -p "$WINROOT/c/src" "$WINROOT/data"
+printf '[automount]\nroot = %s/ # moved drives\n' "$WINROOT" > "$TEST_ROOT/wsl-moved.conf"
+result=0; NP_KERNEL=wsl NP_WSL_CONF="$TEST_ROOT/wsl-moved.conf" new_project --name moved --parent "$WINROOT/c/src" --environment linux > /dev/null 2>&1 || result=$?
+[ "$result" -eq 1 ] && [ ! -e "$WINROOT/c/src/moved" ] || fail 'WSL project accepted on a drive under a custom mount root'
+if ln -s "$WINROOT/c" "$NP/winlink" 2>/dev/null && [ -L "$NP/winlink" ]; then
+  result=0; NP_KERNEL=wsl NP_WSL_CONF="$TEST_ROOT/wsl-moved.conf" new_project --name vialink --parent "$NP/winlink/new" --environment linux > /dev/null 2>&1 || result=$?
+  [ "$result" -eq 1 ] && [ ! -e "$WINROOT/c/new" ] || fail 'WSL project accepted through a symlink onto a Windows drive'
   rm -f -- "$NP/winlink"
 else
-  echo 'SKIP: no /mnt on this system; symlink case not exercised'
+  rm -rf -- "$NP/winlink"
+  echo 'SKIP: host cannot create a real symbolic link; symlink onto a Windows drive not exercised'
 fi
+NP_KERNEL=wsl NP_WSL_CONF="$TEST_ROOT/wsl-moved.conf" new_project --name notadrive --parent "$WINROOT/data" --environment linux > /dev/null \
+  || fail 'WSL project refused in a non-drive directory under the mount root'
+[ -d "$WINROOT/data/notadrive/.git" ] || fail 'WSL project under the mount root was not created'
+printf '[automount]\nroot = "/"\n' > "$TEST_ROOT/wsl-root.conf"
+result=0; NP_KERNEL=wsl NP_WSL_CONF="$TEST_ROOT/wsl-root.conf" new_project --name rooted --parent /c/src --environment linux > /dev/null 2>&1 || result=$?
+[ "$result" -eq 1 ] || fail 'WSL project accepted on /c with mount root /'
+pass 'WSL location guard follows the configured drive mount root and symlinks'
 result=0; NP_KERNEL=wsl new_project --name climbs --parent "$NP/not-yet/../../escape" --environment linux > /dev/null 2>&1 || result=$?
 [ "$result" -eq 1 ] && [ ! -e "$NP/not-yet" ] && [ ! -e "$TEST_ROOT/escape" ] || fail "WSL guard accepted '..' in a missing path"
 pass "Scaffolder resolves symlinks and refuses '..' before checking the WSL location"
@@ -576,6 +676,13 @@ result=0
 new_project --name winoptions --parent "$NP" --environment windows --stack rust --no-claude > "$TEST_ROOT/handoff.log" || result=$?
 [ "$result" -eq 3 ] && grep -q -- '-Stack rust -NoClaude' "$TEST_ROOT/handoff.log" || fail 'Windows handoff lost selections'
 pass 'Windows handoff preserves stack and Claude selection'
+# Choices are case-insensitive, as in new-project.ps1.
+new_project --name mixedcase --parent "$NP" --environment Linux --stack Python > /dev/null || fail 'mixed-case environment or stack rejected'
+grep -q 'uv run ruff check' "$NP/mixedcase/scripts/check.sh" || fail 'mixed-case stack not applied'
+result=0
+new_project --name winmixed --parent "$NP" --environment WINDOWS --stack RUST > "$TEST_ROOT/handoff-case.log" || result=$?
+[ "$result" -eq 3 ] && grep -q -- '-Environment Windows -Stack rust' "$TEST_ROOT/handoff-case.log" || fail 'upper-case Windows handoff failed'
+pass 'Scaffolder accepts environment and stack in any case'
 NP_OS=Darwin new_project --name macapp --parent "$NP" --windows-native no --linux-target yes > /dev/null
 grep -q 'Canonical development environment: MACOS' "$NP/macapp/PROJECT-CHARTER.md" || fail 'macOS environment not recorded'
 grep -q 'container or Linux VM' "$NP/macapp/PROJECT-CHARTER.md" || fail 'macOS Linux-target reason not recorded'

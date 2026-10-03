@@ -139,8 +139,8 @@ foreach ($t in $base) {
         Ok "$($t.What) found"
     }
     elseif ($Check) {
-        if ($t.Cmd -eq 'gh') { Warn "$($t.What) is missing (optional GitHub access)" }
-        else { Bad "$($t.What) is missing" }
+        # GitHub CLI is required on every platform, as in the Linux and macOS bootstrap.
+        Bad "$($t.What) is missing"
     }
     elseif ($InstallMissing -and (Have 'winget')) {
         Write-Host "  installing $($t.What) ..."

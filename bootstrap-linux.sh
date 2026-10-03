@@ -78,6 +78,12 @@ else
   esac
 fi
 
+if [ "$IS_WSL" = 1 ]; then
+  # Drive mount root and powershell.exe lookup; /etc/wsl.conf can move the drives.
+  # shellcheck source=helpers/wsl-paths.sh
+  . "$SCRIPT_DIR/helpers/wsl-paths.sh" || { echo "toolkit helper missing: $SCRIPT_DIR/helpers/wsl-paths.sh" >&2; exit 1; }
+fi
+
 if [ "$INSTALL_BROWSER_BRIDGE" = 1 ] && [ "$IS_WSL" = 0 ]; then
   echo '--install-browser-bridge is only for WSL; native Linux and macOS already have a browser.' >&2
   exit 2
@@ -413,7 +419,6 @@ elif [ "$IS_WSL" = 0 ]; then
 else
   # WSL has no browser of its own, so 'gh auth login --web' appears to hang
   # without the optional bridge that opens URLs in the Windows default browser.
-  PS_EXE="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
   # A wslview from the distribution (wslu) or the user already does the job. It is
   # preserved, so report it rather than counting the preservation as a failure.
   EXISTING_BRIDGE=$(command -v wslview 2>/dev/null || true)
@@ -428,8 +433,8 @@ else
     else
       warn "browser bridge absent, legacy, or custom; use --install-browser-bridge to install/upgrade the toolkit bridge"
     fi
-  elif [ ! -x "$PS_EXE" ]; then
-    bad "powershell.exe not reachable from WSL; cannot install the browser bridge"
+  elif ! wsl_powershell >/dev/null; then
+    bad "powershell.exe not reachable from WSL (not at the drive mount root or on PATH); cannot install the browser bridge"
   else
     # shellcheck source=helpers/install-browser-bridge.sh
     . "$SCRIPT_DIR/helpers/install-browser-bridge.sh"
@@ -583,15 +588,17 @@ if [ "$DOCTOR" = 1 ]; then
   say "9. Doctor: environment boundaries and usable configuration"
   if [ "$IS_WSL" = 1 ]; then
     ok "WSL kernel detected"
-    # Linux projects under /mnt/c are slow and lose Linux permissions.
+    # Linux projects on a Windows drive are slow and lose Linux permissions.
+    WSL_DRIVE_ROOT=$(wsl_drive_root)
     if [ -d "$HOME/src" ]; then
       SRC_REAL=$(cd -- "$HOME/src" && pwd -P)
-      case "$SRC_REAL" in
-        /mnt/*) warn "$HOME/src resolves to $SRC_REAL on the Windows filesystem; keep Linux projects on the Linux filesystem" ;;
-        *) ok "$HOME/src is on the Linux filesystem" ;;
-      esac
+      if wsl_is_windows_path "$SRC_REAL"; then
+        warn "$HOME/src resolves to $SRC_REAL on the Windows filesystem; keep Linux projects on the Linux filesystem"
+      else
+        ok "$HOME/src is on the Linux filesystem"
+      fi
     else
-      skip "$HOME/src does not exist yet; keep Linux projects there, not under /mnt/c"
+      skip "$HOME/src does not exist yet; keep Linux projects there, not under ${WSL_DRIVE_ROOT}c"
     fi
   elif [ "$IS_MACOS" = 1 ]; then
     ok "macOS detected ($(uname -m 2>/dev/null))"

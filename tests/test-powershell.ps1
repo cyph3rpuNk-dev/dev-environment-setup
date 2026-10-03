@@ -107,6 +107,7 @@ function Get-Command {
     param($Name, $ErrorAction)
     if ($Name -eq 'rustup' -and $env:TEST_NO_RUSTUP -eq '1') { return }
     if ($Name -in @('rustc', 'cargo') -and $env:TEST_NO_RUST -eq '1') { return }
+    if ($Name -eq 'gh' -and $env:TEST_NO_GH -eq '1') { return }
     Microsoft.PowerShell.Core\Get-Command $Name -ErrorAction SilentlyContinue
 }
 function code { Record 'code' $args }
@@ -183,6 +184,15 @@ exit $result
         $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Rust' -Inspect | Out-String
         Assert ($LASTEXITCODE -eq 1 -and ([regex]::Matches($output, 'FAIL')).Count -eq 1 -and $output -match 'cargo tools skipped until rustup is installed') 'Missing Rust toolchain counts as one required failure'
     } finally { $env:TEST_NO_RUSTUP = $savedNoRustup; $env:TEST_NO_RUST = $null }
+
+    # GitHub CLI is required on Windows too, as on Linux and macOS: one failure, not a warning.
+    $fixture = Join-Path $testRoot 'profile-no-gh'
+    $null = New-Item -ItemType Directory -Path $fixture
+    try {
+        $env:TEST_NO_GH = '1'
+        $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -Inspect | Out-String
+        Assert ($LASTEXITCODE -eq 1 -and ([regex]::Matches($output, 'FAIL')).Count -eq 1 -and $output -match 'FAIL.*GitHub CLI.*is missing') 'Missing GitHub CLI is one required failure'
+    } finally { $env:TEST_NO_GH = $null }
 
     # A helper that refuses to load (as a file blocked after a ZIP download does) is
     # named as the problem, never misreported as a GitHub sign-in failure.
