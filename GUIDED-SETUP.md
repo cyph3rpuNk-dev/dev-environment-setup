@@ -160,8 +160,9 @@ powershell -NoProfile -File .\bootstrap-windows.ps1 -InstallMissing -Stack Pytho
 Newly installed tools only appear in terminals started afterwards. If the install
 command still reports a tool as missing, your session started before it was installed:
 ask the user to start you again in a new terminal window, then run the install command
-once more; it should report `ok`. If a downloaded script is blocked, `Unblock-File` on
-that one file fixes it.
+once more; it should report `ok`. If a downloaded script is blocked, inspect it and
+`helpers\github-auth.ps1`, which the Windows scripts load, then `Unblock-File` both
+(see "A downloaded script is blocked" in `docs/troubleshooting.md`).
 
 **If the project is built in WSL**, the next command needs an **Administrator**
 PowerShell, which you cannot open. Hand it to the user: right-click PowerShell, choose

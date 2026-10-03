@@ -44,6 +44,31 @@ try {
         }
         else { Write-Host 'skipped: shellcheck is not installed (CI runs it on Linux)' }
     }
+    Step 'PSScriptAnalyzer (when installed)' {
+        # CI pins the analyzer with DEVSETUP_PSSA_VERSION; 'skip' turns the step off.
+        $pssaVersion = $env:DEVSETUP_PSSA_VERSION
+        if ($pssaVersion -eq 'skip') { Write-Host 'skipped: DEVSETUP_PSSA_VERSION is skip'; return }
+        if ($pssaVersion) { Import-Module PSScriptAnalyzer -RequiredVersion $pssaVersion -ErrorAction Stop }
+        elseif (Get-Module -ListAvailable -Name PSScriptAnalyzer) { Import-Module PSScriptAnalyzer -ErrorAction Stop }
+        else { Write-Host 'skipped: PSScriptAnalyzer is not installed (CI runs it on Linux)'; return }
+        $settings = Join-Path $root 'PSScriptAnalyzerSettings.psd1'
+        $findings = @()
+        foreach ($file in @(Get-ChildItem *.ps1, helpers/*.ps1, scripts/*.ps1, tests/*.ps1)) {
+            $findings += @(Invoke-ScriptAnalyzer -Path $file.FullName -Settings $settings |
+                ForEach-Object { "$($file.Name):$($_.Line) $($_.RuleName): $($_.Message)" })
+        }
+        # Templates are not .ps1 files, so analyze their text.
+        foreach ($file in @(Get-ChildItem templates/foundation/*.ps1.template)) {
+            $text = [IO.File]::ReadAllText($file.FullName)
+            $findings += @(Invoke-ScriptAnalyzer -ScriptDefinition $text -Settings $settings |
+                ForEach-Object { "$($file.Name):$($_.Line) $($_.RuleName): $($_.Message)" })
+        }
+        if ($findings.Count -gt 0) {
+            $findings | ForEach-Object { Write-Host "  $_" }
+            throw "$($findings.Count) PSScriptAnalyzer finding(s)"
+        }
+        Write-Host "PSScriptAnalyzer $((Get-Module PSScriptAnalyzer).Version): no findings"
+    }
     Step 'PowerShell regression tests' { & $shellExe -NoProfile -File tests/test-powershell.ps1 }
     Step 'Bash regression tests' {
         # Git for Windows launched from PowerShell may inherit only Windows PATH.

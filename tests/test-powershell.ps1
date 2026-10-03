@@ -1,4 +1,10 @@
 # No installers, credentials, browser launches, or real user configuration.
+# The mocks below reproduce the real commands' signatures, share state with helper
+# scripts through globals, and seed variables that extracted bootstrap blocks read.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidGlobalVars', '', Justification = 'Mocks share state with helper scripts run in this session.')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Mocks keep the signatures of the commands they replace.')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '', Justification = 'Variables are read by bootstrap blocks extracted from the AST.')]
+param()
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $shellExe = (Get-Process -Id $PID).Path
@@ -52,6 +58,7 @@ try {
         $null = New-Item -ItemType Directory -Path (Join-Path $whitespaceRoot $directory) -Force
     }
     Copy-Item -LiteralPath "$root/scripts/check.ps1" -Destination "$whitespaceRoot/scripts/check.ps1"
+    Copy-Item -LiteralPath "$root/PSScriptAnalyzerSettings.psd1" -Destination $whitespaceRoot
     foreach ($file in @('bootstrap.ps1', 'helpers/helper.ps1')) {
         [IO.File]::WriteAllText((Join-Path $whitespaceRoot $file), "# syntax fixture`n", $utf8)
     }
@@ -168,6 +175,20 @@ exit $result
         $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Rust' -Inspect | Out-String
         Assert ($LASTEXITCODE -eq 1 -and ([regex]::Matches($output, 'FAIL')).Count -eq 1 -and $output -match 'cargo tools skipped until rustup is installed') 'Missing Rust toolchain counts as one required failure'
     } finally { $env:TEST_NO_RUSTUP = $savedNoRustup; $env:TEST_NO_RUST = $null }
+
+    # A helper that refuses to load (as a file blocked after a ZIP download does) is
+    # named as the problem, never misreported as a GitHub sign-in failure.
+    $blockedRoot = Join-Path $testRoot 'blocked-toolkit'
+    $null = New-Item -ItemType Directory -Path (Join-Path $blockedRoot 'helpers')
+    Copy-Item -LiteralPath "$root/bootstrap-windows.ps1" -Destination $blockedRoot
+    Copy-Item -LiteralPath "$root/helpers/codex-with-github-mcp.ps1" -Destination (Join-Path $blockedRoot 'helpers')
+    [IO.File]::WriteAllText((Join-Path $blockedRoot 'helpers/github-auth.ps1'), "throw 'simulated blocked file'`n", $utf8)
+    $fixture = Join-Path $testRoot 'profile-blocked-helper'
+    $null = New-Item -ItemType Directory -Path $fixture
+    $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" (Join-Path $blockedRoot 'bootstrap-windows.ps1') $fixture 'Base' -Inspect | Out-String
+    Assert ($LASTEXITCODE -eq 1 -and $output -match 'GitHub sign-in was not checked' -and $output -match 'simulated blocked file' -and $output -match 'Unblock-File -LiteralPath' -and $output -notmatch 'GitHub CLI is not authenticated') 'Unloadable GitHub helper is reported by name'
+    try { & (Join-Path $blockedRoot 'helpers/codex-with-github-mcp.ps1'); throw 'Expected helper load failure' }
+    catch { Assert ($_.ToString() -match 'Could not load .*github-auth\.ps1' -and $_.ToString() -match 'Unblock-File') 'Codex launcher names an unloadable GitHub helper' }
 
     $fixture = Join-Path $testRoot 'profile-invalid'
     $null = New-Item -ItemType Directory -Path $fixture
