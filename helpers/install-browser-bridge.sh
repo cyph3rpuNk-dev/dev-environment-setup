@@ -17,6 +17,23 @@ legacy_browser_bridge() {
     "     -NoProfile -NonInteractive -Command \"Start-Process '\$1'\" >/dev/null 2>&1"
 }
 
+# SHA-256 of the v2 bridge (helpers/wslview.sh before v3); it may be upgraded too.
+# tests/fixtures/wslview-v2.sh keeps its exact bytes.
+PREVIOUS_BRIDGE_V2_SHA256=4fc721bf180d8e55dfd7389d9f673a20783e9e708ab7d990292810ff6b9faf0b
+
+file_sha256() {
+  local sum
+  if command -v sha256sum >/dev/null 2>&1; then sum=$(sha256sum < "$1") || return 1
+  else sum=$(shasum -a 256 < "$1") || return 1; fi
+  printf '%s\n' "${sum%% *}"
+}
+
+# Succeed when the installed bridge is an earlier version this repository shipped.
+previous_toolkit_bridge() {
+  cmp -s "$1" <(legacy_browser_bridge) && return 0
+  [ "$(file_sha256 "$1" 2>/dev/null)" = "$PREVIOUS_BRIDGE_V2_SHA256" ]
+}
+
 install_browser_bridge() {
   local source_file="$1" bin_dir="$2" profile_dir="$3"
   local bridge="$bin_dir/wslview" profile="$profile_dir/wsl-browser.sh"
@@ -28,11 +45,11 @@ install_browser_bridge() {
   if [ -n "$existing_bridge" ] && [ "$existing_bridge" != "$bridge" ]; then
     echo "Preserving existing browser bridge on PATH: $existing_bridge" >&2; return 1
   fi
-  # Replace only the exact legacy shim shipped by this repository.
+  # Replace only exact earlier versions shipped by this repository.
   if [ -L "$bridge" ]; then
     echo "Preserving custom browser bridge: $bridge" >&2; return 1
   elif [ -e "$bridge" ] && ! cmp -s "$source_file" "$bridge"; then
-    if ! cmp -s "$bridge" <(legacy_browser_bridge); then
+    if ! previous_toolkit_bridge "$bridge"; then
       echo "Preserving custom browser bridge: $bridge" >&2; return 1
     fi
   fi

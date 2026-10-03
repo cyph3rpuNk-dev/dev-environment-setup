@@ -133,7 +133,9 @@ cd /mnt/c/Users/<you>/dev-environment-setup
 
 Keep Linux **projects** on the Linux filesystem (for example `~/src`), never under
 `/mnt/c`: builds there are several times slower and lose Linux file permissions.
-Running the toolkit's scripts from `/mnt/c` is fine.
+Running the toolkit's scripts from `/mnt/c` is fine. If `/etc/wsl.conf` moves the
+Windows drives (`[automount]` `root`), the scaffolder's and doctor's location checks
+follow that setting, and the browser bridge finds `powershell.exe` on PATH.
 
 ---
 

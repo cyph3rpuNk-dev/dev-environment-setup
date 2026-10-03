@@ -153,7 +153,7 @@ on a fresh machine with Codex has not yet been verified.
 | [profiles/](profiles/README.md) | VS Code settings templates |
 | [templates/](templates/README.md) | Repository foundation templates used by the scaffolder |
 | [doctor/](doctor/README.md) | What the automated checks can and cannot prove |
-| `helpers/` | Browser bridge for WSL sign-in; Codex launcher with a process-scoped GitHub token; GitHub CLI status helper shared by the Windows scripts |
+| `helpers/` | Browser bridge for WSL sign-in; Codex launcher with a process-scoped GitHub token; GitHub CLI status helper shared by the Windows scripts; WSL drive-location helper |
 
 ## Maintaining this toolkit
 

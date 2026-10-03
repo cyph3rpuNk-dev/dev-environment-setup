@@ -58,8 +58,9 @@ ask() { # ask VAR "question"
   read -r -p "$2 " answer || die "no answer for $1"
   printf -v "$1" '%s' "$answer"
 }
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 yes_no() { # normalise yes/no answers, rejecting anything else
-  case "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" in
+  case "$(lower "$2")" in
     y|yes) printf -v "$1" yes ;;
     n|no) printf -v "$1" no ;;
     *) die "answer yes or no for $1 (got '$2')" ;;
@@ -72,15 +73,18 @@ case "$NAME" in
 esac
 # Windows cannot hold these names (with any extension) or a trailing dot, so such a
 # repository could not be checked out there.
-NAME_LOWER=$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]')
+NAME_LOWER=$(lower "$NAME")
 case "${NAME_LOWER%%.*}" in
   con|prn|aux|nul|com[0-9]|lpt[0-9]) die "'$NAME' is a reserved device name on Windows; choose another name" ;;
 esac
 case "$NAME" in *.) die "name must not end with '.'" ;; esac
+# Choices are case-insensitive, as in new-project.ps1.
+STACK=$(lower "$STACK")
 case "$STACK" in none|rust|python) ;; *) die "unknown stack '$STACK' (none, rust, python)" ;; esac
 
 # --- Choose the environment -------------------------------------------------
 REASON=""
+ENVIRONMENT=$(lower "$ENVIRONMENT")
 case "$ENVIRONMENT" in
   linux|windows) REASON="chosen explicitly" ;;
   '') ;;
@@ -99,6 +103,7 @@ if [ -z "$ENVIRONMENT" ]; then
       echo "It targets both Windows and Linux. Pick one canonical development side;"
       echo "the other becomes a CI or compatibility target."
       ask ENVIRONMENT "Canonical side [linux/windows]:"
+      ENVIRONMENT=$(lower "$ENVIRONMENT")
       case "$ENVIRONMENT" in linux|windows) ;; *) die "environment must be linux or windows" ;; esac
       REASON="cross-platform; $ENVIRONMENT is canonical and the other platform must be covered by CI" ;;
   esac
@@ -133,11 +138,14 @@ if [ "$IS_WSL" = 1 ]; then
   done
   case "$missing/" in */../*) die "use a --parent path without '..' in the part that does not exist yet" ;; esac
   base=$(cd -P -- "$existing" && pwd -P) || die "cannot resolve $PARENT"
-  # When nothing below / exists (no /mnt at all), base is "/"; avoid joining to "//mnt".
+  # When nothing below / exists, base is "/"; avoid joining to "//mnt".
   resolved="${base%/}$missing"
-  case "$resolved/" in
-    /mnt/*) die "$PARENT is on the Windows filesystem ($resolved). Linux projects belong on the Linux filesystem, for example ~/src" ;;
-  esac
+  # Windows drives are mounted under /mnt/ unless /etc/wsl.conf moves them.
+  # shellcheck source=helpers/wsl-paths.sh
+  . "$TOOLKIT/helpers/wsl-paths.sh" || die "toolkit helper missing: $TOOLKIT/helpers/wsl-paths.sh"
+  if wsl_is_windows_path "$resolved"; then
+    die "$PARENT is on the Windows filesystem ($resolved). Linux projects belong on the Linux filesystem, for example ~/src"
+  fi
 fi
 TARGET="$PARENT/$NAME"
 if [ -L "$TARGET" ]; then

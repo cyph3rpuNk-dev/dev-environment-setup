@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dev-environment-setup browser bridge v3
+# dev-environment-setup browser bridge v2
 # URLs are base64-encoded data on stdin, never interpolated into PowerShell code.
 set -euo pipefail
 if [ "$#" -ne 1 ]; then
@@ -10,16 +10,7 @@ case "$1" in
   http://*|https://*) ;;
   *) echo 'Only http and https URLs are supported.' >&2; exit 2 ;;
 esac
-# Usually under /mnt/c. When /etc/wsl.conf moves the drives, Windows' PATH (appended
-# by WSL interop) still finds it. helpers/wsl-paths.sh uses the same lookup.
-powershell=${DEVSETUP_WSL_POWERSHELL:-/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe}
-if [ ! -x "$powershell" ]; then
-  powershell=$(command -v powershell.exe 2>/dev/null) || {
-    echo 'powershell.exe was not found at /mnt/c or on PATH; cannot open the URL in Windows.' >&2
-    exit 1
-  }
-fi
-printf '%s' "$1" | base64 | "$powershell" \
+printf '%s' "$1" | base64 | /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe \
   -NoProfile -NonInteractive -Command '
 $ErrorActionPreference = "Stop"
 $url = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd()))
