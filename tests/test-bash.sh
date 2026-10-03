@@ -83,6 +83,18 @@ DEVSETUP_WSL_CONF="$TEST_ROOT/missing.conf" wsl_is_windows_path /mnt/c/Users || 
 DEVSETUP_WSL_CONF="$TEST_ROOT/missing.conf" wsl_is_windows_path /mnt/d || fail '/mnt/d not recognized as a Windows drive'
 if DEVSETUP_WSL_CONF="$TEST_ROOT/missing.conf" wsl_is_windows_path /mnt/wsl/shared; then fail '/mnt/wsl mistaken for a Windows drive'; fi
 if DEVSETUP_WSL_CONF="$TEST_ROOT/missing.conf" wsl_is_windows_path /home/me/src; then fail 'Linux path mistaken for a Windows drive'; fi
+# A configured root reached through a symlink still matches resolved paths, as on
+# macOS where the temporary directory itself is a symlink.
+# Git Bash may copy instead of linking; then the case is skipped and the copy removed.
+mkdir -p "$TEST_ROOT/real-root/c/x"
+if ln -s "$TEST_ROOT/real-root" "$TEST_ROOT/link-root" 2>/dev/null && [ -L "$TEST_ROOT/link-root" ]; then
+  printf '[automount]\nroot = %s/\n' "$TEST_ROOT/link-root" > "$TEST_ROOT/link-root.conf"
+  real_drive=$(cd -P -- "$TEST_ROOT/real-root/c/x" && pwd -P)
+  DEVSETUP_WSL_CONF="$TEST_ROOT/link-root.conf" wsl_is_windows_path "$real_drive" || fail 'resolved drive path not matched through a symlinked root'
+else
+  rm -rf -- "$TEST_ROOT/link-root"
+  echo 'SKIP: host cannot create a real symbolic link; symlinked mount root not exercised'
+fi
 pass 'WSL drive mount root is read from wsl.conf and drives are recognized precisely'
 mkdir -p "$TEST_ROOT/system-bin" "$TEST_ROOT/local-bin" "$TEST_ROOT/new-profile"
 printf '#!/bin/sh\nexit 0\n' > "$TEST_ROOT/system-bin/xdg-open"
@@ -305,11 +317,16 @@ pass 'Bridge installation finds powershell.exe on PATH'
 # The doctor's project-location check follows a drive mount root moved by wsl.conf.
 mkdir -p "$TEST_ROOT/doctor-win/c/projects"
 printf '[automount]\nroot = %s/\n' "$TEST_ROOT/doctor-win" > "$TEST_ROOT/doctor-wsl.conf"
-ln -s "$TEST_ROOT/doctor-win/c/projects" "$TEST_ROOT/user/src"
-TEST_WSL_CONF="$TEST_ROOT/doctor-wsl.conf" run_bootstrap fedora wsl --doctor > "$TEST_ROOT/doctor-moved.log" || true
-grep -q 'on the Windows filesystem' "$TEST_ROOT/doctor-moved.log" || fail 'doctor missed a project folder on a moved Windows drive'
-rm -f -- "$TEST_ROOT/user/src"
-pass 'Doctor follows the configured drive mount root'
+if ln -s "$TEST_ROOT/doctor-win/c/projects" "$TEST_ROOT/user/src" 2>/dev/null && [ -L "$TEST_ROOT/user/src" ]; then
+  TEST_WSL_CONF="$TEST_ROOT/doctor-wsl.conf" run_bootstrap fedora wsl --doctor > "$TEST_ROOT/doctor-moved.log" || true
+  grep -q 'on the Windows filesystem' "$TEST_ROOT/doctor-moved.log" || fail 'doctor missed a project folder on a moved Windows drive'
+  rm -f -- "$TEST_ROOT/user/src"
+  pass 'Doctor follows the configured drive mount root'
+else
+  # Git Bash may copy instead of linking; remove the copy so later cases start clean.
+  rm -rf -- "$TEST_ROOT/user/src"
+  echo 'SKIP: host cannot create a real symbolic link; moved-root doctor case not exercised'
+fi
 
 # Native Linux must not need or touch anything WSL-specific.
 : > "$TEST_EVENTS"
@@ -584,10 +601,14 @@ mkdir -p "$WINROOT/c/src" "$WINROOT/data"
 printf '[automount]\nroot = %s/ # moved drives\n' "$WINROOT" > "$TEST_ROOT/wsl-moved.conf"
 result=0; NP_KERNEL=wsl NP_WSL_CONF="$TEST_ROOT/wsl-moved.conf" new_project --name moved --parent "$WINROOT/c/src" --environment linux > /dev/null 2>&1 || result=$?
 [ "$result" -eq 1 ] && [ ! -e "$WINROOT/c/src/moved" ] || fail 'WSL project accepted on a drive under a custom mount root'
-ln -s "$WINROOT/c" "$NP/winlink"
-result=0; NP_KERNEL=wsl NP_WSL_CONF="$TEST_ROOT/wsl-moved.conf" new_project --name vialink --parent "$NP/winlink/new" --environment linux > /dev/null 2>&1 || result=$?
-[ "$result" -eq 1 ] && [ ! -e "$WINROOT/c/new" ] || fail 'WSL project accepted through a symlink onto a Windows drive'
-rm -f -- "$NP/winlink"
+if ln -s "$WINROOT/c" "$NP/winlink" 2>/dev/null && [ -L "$NP/winlink" ]; then
+  result=0; NP_KERNEL=wsl NP_WSL_CONF="$TEST_ROOT/wsl-moved.conf" new_project --name vialink --parent "$NP/winlink/new" --environment linux > /dev/null 2>&1 || result=$?
+  [ "$result" -eq 1 ] && [ ! -e "$WINROOT/c/new" ] || fail 'WSL project accepted through a symlink onto a Windows drive'
+  rm -f -- "$NP/winlink"
+else
+  rm -rf -- "$NP/winlink"
+  echo 'SKIP: host cannot create a real symbolic link; symlink onto a Windows drive not exercised'
+fi
 NP_KERNEL=wsl NP_WSL_CONF="$TEST_ROOT/wsl-moved.conf" new_project --name notadrive --parent "$WINROOT/data" --environment linux > /dev/null \
   || fail 'WSL project refused in a non-drive directory under the mount root'
 [ -d "$WINROOT/data/notadrive/.git" ] || fail 'WSL project under the mount root was not created'

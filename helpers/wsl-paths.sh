@@ -24,9 +24,13 @@ wsl_drive_root() {
 
 # Succeed when an absolute, already-resolved path is on a mounted Windows drive.
 wsl_is_windows_path() {
-  local root
+  local root real
   root=$(wsl_drive_root)
   case "${1%/}/" in "$root"[A-Za-z]/*) return 0 ;; esac
+  # Callers pass a resolved path, so also compare with the root's resolved path in
+  # case the configured root is reached through a symbolic link.
+  real=$(cd -P -- "$root" 2>/dev/null && pwd -P) || return 1
+  case "${1%/}/" in "${real%/}/"[A-Za-z]/*) return 0 ;; esac
   return 1
 }
 
