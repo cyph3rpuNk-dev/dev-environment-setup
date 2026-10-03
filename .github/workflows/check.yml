@@ -10,6 +10,8 @@ permissions:
   contents: read
 jobs:
   check:
+    # Keep the job names that required status checks refer to; pssa is not part of them.
+    name: check (${{ matrix.os }}, ${{ matrix.shell }})
     strategy:
       fail-fast: false
       matrix:
