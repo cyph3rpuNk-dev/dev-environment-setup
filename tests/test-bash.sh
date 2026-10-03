@@ -491,11 +491,18 @@ cat > "$TEST_ROOT/failgit/git" <<'STAGING'
 #!/usr/bin/env bash
 if [ "$1" = init ]; then
   for target; do :; done
-  case "$target" in "$TEST_PARENT"/.devsetup-stage.*/project) exit 0;; *) exit 91;; esac
+  expected_parent=$(cd -P -- "$TEST_PARENT" && pwd -P) || exit 92
+  case "$target" in "$expected_parent"/.devsetup-stage.*/project) exit 0;; *) exit 91;; esac
 fi
 STAGING
 TEST_PARENT="$NP" fail_project --name sibling --parent "$NP" --environment linux > /dev/null
 pass 'Git initializes in staging on the destination filesystem'
+if ln -s "$NP" "$TEST_ROOT/np-alias" 2>/dev/null && [ -L "$TEST_ROOT/np-alias" ]; then
+  TEST_PARENT="$TEST_ROOT/np-alias" fail_project --name sibling-alias --parent "$TEST_ROOT/np-alias" --environment linux > /dev/null
+  pass 'Staging filesystem check accepts a parent with a symbolic-link spelling'
+else
+  echo 'SKIP: host cannot create a real symbolic-link parent'
+fi
 # Simulate a concurrent writer during preparation. The destination was empty at
 # validation but now contains someone else's file when publication starts.
 mkdir -p "$NP/concurrent"
