@@ -56,10 +56,10 @@ jobs:
           persist-credentials: false
       - name: Bash syntax
         shell: bash
-        run: for f in *.sh helpers/*.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
+        run: for f in *.sh helpers/*.sh scripts/*.sh tests/*.sh templates/foundation/*.sh.template; do bash -n "$f"; done
       - name: ShellCheck
         shell: bash
-        run: shellcheck -S warning -x *.sh helpers/*.sh scripts/*.sh tests/*.sh
+        run: shellcheck -S warning -x *.sh helpers/*.sh scripts/*.sh tests/*.sh templates/foundation/*.sh.template
       - name: Bash regression tests
         shell: bash
         run: bash tests/test-bash.sh

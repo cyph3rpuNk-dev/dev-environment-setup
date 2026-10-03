@@ -38,14 +38,33 @@ cmp -s "$ROOT/helpers/wslview.sh" "$TEST_ROOT/bin/wslview" || fail 'legacy upgra
 pass 'Exact legacy bridge upgrades to the safe implementation'
 if bash "$ROOT/helpers/wslview.sh" 'file:///sensitive'; then fail 'non-web URL accepted'; fi
 pass 'Bash bridge rejects non-web URLs before invoking Windows'
+mkdir -p "$TEST_ROOT/system-bin" "$TEST_ROOT/local-bin" "$TEST_ROOT/new-profile"
+printf '#!/bin/sh\nexit 0\n' > "$TEST_ROOT/system-bin/xdg-open"
+chmod +x "$TEST_ROOT/system-bin/xdg-open"
+PATH="$TEST_ROOT/local-bin:$TEST_ROOT/system-bin:$PATH" install_browser_bridge "$ROOT/helpers/wslview.sh" "$TEST_ROOT/local-bin" "$TEST_ROOT/new-profile"
+[ ! -e "$TEST_ROOT/local-bin/xdg-open" ] || fail 'system xdg-open was shadowed'
+cp "$TEST_ROOT/system-bin/xdg-open" "$TEST_ROOT/system-bin/wslview"
+mkdir -p "$TEST_ROOT/other-bin" "$TEST_ROOT/other-profile"
+if PATH="$TEST_ROOT/other-bin:$TEST_ROOT/system-bin:$PATH" install_browser_bridge "$ROOT/helpers/wslview.sh" "$TEST_ROOT/other-bin" "$TEST_ROOT/other-profile"; then fail 'system wslview was shadowed'; fi
+[ ! -e "$TEST_ROOT/other-bin/wslview" ] && [ ! -e "$TEST_ROOT/other-profile/wsl-browser.sh" ] || fail 'handler preservation performed writes'
+pass 'Bridge preserves handlers in other PATH directories before writing'
 unset -f sudo
 
 # Full bootstrap fixtures: every external provisioning/auth command is mocked, and
 # the platform is described by fixture files rather than read from this machine.
 mkdir -p "$TEST_ROOT/mock-bin" "$TEST_ROOT/user" "$TEST_ROOT/os"
+# A narrow utility PATH prevents missing mocks from falling through to real tools
+# such as uv or rustup installed on the test host. Wrappers also work in Git Bash.
+mkdir -p "$TEST_ROOT/utilities"
+for utility in bash awk cat chmod cmp cp dirname env grep head ls mkdir mktemp mv rm sed tr uname touch; do
+  utility_path=$(command -v "$utility") || fail "test dependency unavailable: $utility"
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$utility_path" > "$TEST_ROOT/utilities/$utility"
+  chmod +x "$TEST_ROOT/utilities/$utility"
+done
 printf 'ID=fedora\nPRETTY_NAME="Fedora Linux 44"\n' > "$TEST_ROOT/os/fedora"
 printf 'ID=ubuntu\nID_LIKE=debian\nPRETTY_NAME="Ubuntu 24.04 LTS"\n' > "$TEST_ROOT/os/ubuntu"
 printf 'ID=arch\nPRETTY_NAME="Arch Linux"\n' > "$TEST_ROOT/os/arch"
+printf 'ID=rocky\nID_LIKE="rhel centos fedora"\n' > "$TEST_ROOT/os/rocky"
 printf 'Linux version 6.8.0-generic (buildd@ubuntu) #1 SMP\n' > "$TEST_ROOT/os/native"
 printf 'Linux version 6.6.87.2-microsoft-standard-WSL2 #1 SMP\n' > "$TEST_ROOT/os/wsl"
 export TEST_EVENTS="$TEST_ROOT/events" TEST_EXTENSIONS="$TEST_ROOT/extensions"
@@ -61,6 +80,9 @@ case "$name" in
     exec "$@" ;;
   dnf|apt-get)
     [ "${TEST_ALLOW_SUDO:-0}" = 1 ] || { echo 'Unexpected package manager call' >&2; exit 90; }
+    if [ "${TEST_GH_UNAVAILABLE:-0}" = 1 ]; then
+      for package in "$@"; do [ "$package" != gh ] || exit 1; done
+    fi
     # A background update holding the dpkg lock, as on a freshly installed Ubuntu.
     if [ "${TEST_PKG_LOCKED:-0}" = 1 ] && [ "$1" = install ]; then
       echo 'E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 412 (unattended-upgr)' >&2
@@ -94,8 +116,17 @@ case "$name" in
     fi
     # Builds before 2.40 reject --active, as the real CLI does.
     case "$version $*" in 2.[0-3][0-9].*--active*) echo 'unknown flag: --active' >&2; exit 1;; esac
-    printf 'workflow\n' ;;
-  claude) printf 'context7 github\n' ;;
+    if [ "${3:-}" = --help ]; then
+      case "$version" in 2.[0-3][0-9].*) :;; *) printf '  --active\n';; esac
+    elif [ "${TEST_SCOPES:-present}" = missing ]; then
+      printf "Logged in to github.com account workflow\n  - Token scopes: 'repo'\n"
+      case " $* " in *' --active '*) :;; *) printf "  - Token scopes: 'workflow'\n";; esac
+    elif [ "${TEST_SCOPES:-present}" != unknown ]; then
+      printf "  - Token scopes: 'repo', 'workflow'\n"
+    fi ;;
+  claude)
+    if [ "${TEST_MCP_LOOKALIKE:-0}" = 1 ] && [ "${2:-}" = get ]; then exit 1; fi
+    printf 'context7 github-backup https://github.com/other/server\n' ;;
   git)
     # Only identity lookups answer; other git calls behave as before.
     if [ "${1:-} ${2:-} ${3:-}" = 'config --global --get' ]; then
@@ -126,7 +157,7 @@ done
 run_bootstrap() {
   local os="$1" kernel="$2"; shift 2
   # The kernel is pinned too, so Linux cases behave the same on a macOS test runner.
-  env HOME="$TEST_ROOT/user" PATH="$TEST_ROOT/mock-bin:/usr/bin:/bin" \
+  env HOME="$TEST_ROOT/user" PATH="$TEST_ROOT/mock-bin:$TEST_ROOT/utilities" \
     DEVSETUP_OS_RELEASE="$TEST_ROOT/os/$os" DEVSETUP_PROC_VERSION="$TEST_ROOT/os/$kernel" \
     DEVSETUP_KERNEL="${TEST_KERNEL:-Linux}" DEVSETUP_BREW_CANDIDATES="${TEST_BREW_CANDIDATES:-$TEST_ROOT/no-such-brew}" \
     bash "$ROOT/bootstrap-linux.sh" "$@"
@@ -223,6 +254,19 @@ TEST_ALLOW_SUDO=1 TEST_MISSING_PKGS=gh run_bootstrap fedora native > "$TEST_ROOT
 grep -q '^dnf install -y gh$' "$TEST_EVENTS" || fail 'dnf did not install the missing package'
 if grep -q '^apt-get ' "$TEST_EVENTS"; then fail 'dnf system invoked apt-get'; fi
 pass 'Missing packages use apt on Debian/Ubuntu and dnf on Fedora'
+: > "$TEST_EVENTS"
+result=0
+TEST_ALLOW_SUDO=1 TEST_MISSING_PKGS='curl git gh' TEST_GH_UNAVAILABLE=1 run_bootstrap rocky native > "$TEST_ROOT/rpm-unavailable.log" 2>&1 || result=$?
+[ "$result" -ne 0 ] && grep -qx 'dnf install -y curl git' "$TEST_EVENTS" && grep -qx 'dnf install -y gh' "$TEST_EVENTS" || fail 'unavailable gh blocked base RPM packages'
+grep -q 'official RPM repository' "$TEST_ROOT/rpm-unavailable.log" || fail 'missing gh repository guidance'
+pass 'Unavailable gh is isolated from base RPM packages and still returns failure'
+mv "$TEST_ROOT/mock-bin/dnf" "$TEST_ROOT/dnf.saved"
+: > "$TEST_EVENTS"
+run_bootstrap rocky native --check > "$TEST_ROOT/no-dnf.log"
+grep -q 'dnf is unavailable' "$TEST_ROOT/no-dnf.log" || fail 'missing package manager not diagnosed'
+if grep -Eq '^(sudo|dnf|rpm) ' "$TEST_EVENTS"; then fail 'missing dnf still invoked RPM provisioning'; fi
+mv "$TEST_ROOT/dnf.saved" "$TEST_ROOT/mock-bin/dnf"
+pass 'RHEL-family systems without dnf fall back to command checks'
 result=0
 TEST_ALLOW_SUDO=1 TEST_MISSING_PKGS=gh TEST_PKG_LOCKED=1 run_bootstrap ubuntu native > "$TEST_ROOT/locked.log" 2>&1 || result=$?
 [ "$result" -ne 0 ] || fail 'failed package installation returned success'
@@ -249,13 +293,28 @@ pass 'Rust and Python stacks combine in one run'
 # An older distribution gh must not read as "not authenticated".
 : > "$TEST_EVENTS"
 TEST_GH_VERSION=2.23.0 run_bootstrap ubuntu native --check > "$TEST_ROOT/oldgh.log" || true
-grep -q 'older than 2.40' "$TEST_ROOT/oldgh.log" || fail 'old gh not diagnosed'
+grep -q 'lacks --active' "$TEST_ROOT/oldgh.log" || fail 'old gh not diagnosed'
 grep -q 'GitHub CLI is authenticated' "$TEST_ROOT/oldgh.log" || fail 'old gh authentication misreported'
 pass 'GitHub CLI older than 2.40 is diagnosed and still recognized as authenticated'
+TEST_SCOPES=missing run_bootstrap ubuntu native --check > "$TEST_ROOT/scopes.log"
+grep -q "active classic token lacks" "$TEST_ROOT/scopes.log" || fail 'account name or inactive scopes produced false success'
+TEST_SCOPES=unknown run_bootstrap ubuntu native --check > "$TEST_ROOT/scopes.log"
+grep -q 'permission could not be determined' "$TEST_ROOT/scopes.log" || fail 'fine-grained or unknown scope reported missing'
+printf 'export GITHUB_MCP_PAT=fake-profile-secret\n' > "$TEST_ROOT/user/.zshrc"
+run_bootstrap ubuntu native --check > "$TEST_ROOT/profiles.log"
+grep -Fq '.zshrc' "$TEST_ROOT/profiles.log" && ! grep -q fake-profile-secret "$TEST_ROOT/profiles.log" || fail 'zsh legacy warning missing or leaked value'
+: > "$TEST_EVENTS"
+TEST_MCP_LOOKALIKE=1 run_bootstrap ubuntu native --configure-agents > "$TEST_ROOT/mcp.log"
+grep -q '^claude mcp get github$' "$TEST_EVENTS" && grep -q 'github is optional' "$TEST_ROOT/mcp.log" || fail 'lookalike MCP mistaken for github'
+grep -q '^claude mcp add .* context7 ' "$TEST_EVENTS" || fail 'lookalike prevented context7 installation'
+pass 'Auth scopes, profile warnings and exact MCP names avoid false positives'
 
 for tool in rustup uv; do
   mv "$TEST_ROOT/mock-bin/$tool" "$TEST_ROOT/$tool.saved"
 done
+result=0
+run_bootstrap fedora native --check --stack=rust > "$TEST_ROOT/no-rustup.log" || result=$?
+[ "$result" -eq 1 ] && grep -q 'rustup not installed' "$TEST_ROOT/no-rustup.log" || fail 'missing rustup is not a required failure'
 : > "$TEST_EVENTS"
 if run_bootstrap fedora native --no-sudo --stack=rust > "$TEST_ROOT/download.log" 2>&1; then fail 'download failure returned success'; fi
 [ ! -e "$TEST_EVENTS.executed" ] || fail 'partial installer executed'
@@ -304,6 +363,7 @@ if grep -Eq '^(brew|sudo|curl) ' "$TEST_EVENTS"; then fail 'bootstrap tried to i
 mkdir -p "$TEST_ROOT/opt-brew"
 mv "$TEST_ROOT/brew.saved" "$TEST_ROOT/opt-brew/brew"
 TEST_KERNEL=Darwin TEST_BREW_CANDIDATES="$TEST_ROOT/opt-brew/brew" run_bootstrap fedora native --check > "$TEST_ROOT/mac-offpath.log"
+if grep -q '^brew shellenv' "$TEST_EVENTS"; then fail 'check mode evaluated brew shellenv'; fi
 grep -q 'package manager: brew' "$TEST_ROOT/mac-offpath.log" && grep -q 'not on PATH in new terminals' "$TEST_ROOT/mac-offpath.log" || fail 'Homebrew outside PATH not found or not explained'
 mv "$TEST_ROOT/opt-brew/brew" "$TEST_ROOT/mock-bin/brew"
 pass 'macOS without Homebrew stops with the official command; Homebrew off PATH is found and explained'
@@ -367,6 +427,7 @@ for f in README.md PROJECT-CHARTER.md AGENTS.md CLAUDE.md scripts/check.sh .gita
   [ -f "$NP/demo/$f" ] || fail "scaffolder did not create $f"
 done
 [ -x "$NP/demo/scripts/check.sh" ] || fail 'scaffolded gate is not executable'
+grep -A 1 '^\[Makefile\]$' "$NP/demo/.editorconfig" | grep -qx 'indent_style = tab' || fail 'generated Makefile tab policy missing'
 [ "$(git -C "$NP/demo" symbolic-ref HEAD)" = refs/heads/main ] || fail 'scaffolded repository not on main'
 if git -C "$NP/demo" rev-parse --verify -q HEAD > /dev/null; then fail 'scaffolder created a commit'; fi
 grep -q 'Canonical development environment: LINUX' "$NP/demo/PROJECT-CHARTER.md" || fail 'environment not recorded'
@@ -392,6 +453,8 @@ result=0; new_project --name demo --parent "$NP" --environment linux > /dev/null
 [ "$result" -eq 1 ] && grep -qx keep "$NP/demo/sentinel" || fail 'scaffolder touched an existing project'
 result=0; new_project --name ../escape --parent "$NP" --environment linux > /dev/null 2>&1 || result=$?
 [ "$result" -eq 1 ] && [ ! -e "$TEST_ROOT/escape" ] || fail 'unsafe name accepted'
+result=0; new_project --name -dash --parent "$NP" --environment linux > /dev/null 2>&1 || result=$?
+[ "$result" -eq 1 ] && [ ! -e "$NP/-dash" ] || fail 'option-shaped name accepted'
 result=0; new_project --name asks --parent "$NP" > /dev/null 2>&1 || result=$?
 [ "$result" -eq 1 ] && [ ! -e "$NP/asks" ] || fail 'missing answers were guessed'
 result=0; NP_KERNEL=wsl new_project --name onwindows --parent /mnt/c/src --environment linux > /dev/null 2>&1 || result=$?
@@ -423,6 +486,16 @@ mkdir -p "$NP/wasempty"
 result=0; fail_project --name wasempty --parent "$NP" --environment linux > /dev/null 2>&1 || result=$?
 [ "$result" -ne 0 ] && [ -d "$NP/wasempty" ] && [ -z "$(ls -A -- "$NP/wasempty")" ] || fail 'failed scaffold did not restore the empty target'
 pass 'A failed scaffold removes only what it created'
+# Inspect git init's actual location without relying on the test host filesystem.
+cat > "$TEST_ROOT/failgit/git" <<'STAGING'
+#!/usr/bin/env bash
+if [ "$1" = init ]; then
+  for target; do :; done
+  case "$target" in "$TEST_PARENT"/.devsetup-stage.*/project) exit 0;; *) exit 91;; esac
+fi
+STAGING
+TEST_PARENT="$NP" fail_project --name sibling --parent "$NP" --environment linux > /dev/null
+pass 'Git initializes in staging on the destination filesystem'
 # Simulate a concurrent writer during preparation. The destination was empty at
 # validation but now contains someone else's file when publication starts.
 mkdir -p "$NP/concurrent"
@@ -485,6 +558,9 @@ bad_case co-author 'co-author or attribution line' owner "$OWNER" "$OWNER" $'fix
 bad_case lowercase-co-author 'co-author or attribution line' owner "$OWNER" "$OWNER" $'fix: work\n\nco-authored-by: Someone <s@example.com>'
 bad_case session-link 'co-author or attribution line' owner "$OWNER" "$OWNER" $'fix: work\n\nClaude-Session: https://claude.ai/code/session_x'
 bad_case generated-line 'co-author or attribution line' owner "$OWNER" "$OWNER" $'fix: work\n\nGenerated with [Claude Code](https://claude.com/claude-code)'
+bad_case generated-other 'co-author or attribution line' owner "$OWNER" "$OWNER" $'fix: work\n\nGenerated-by: another tool'
+bad_case generated-with 'co-author or attribution line' owner "$OWNER" "$OWNER" $'fix: work\n\nGenerated with another tool'
+bad_case other-session 'co-author or attribution line' owner "$OWNER" "$OWNER" $'fix: work\n\nCodex-Session: https://example.invalid/session'
 pass 'Identity check rejects Claude, bot and foreign identities and every attribution line'
 result=0
 (cd "$ID" && env -u ALLOWED_EMAILS bash "$ROOT/scripts/check-commit-identity.sh" main) > "$TEST_ROOT/identity.log" 2>&1 || result=$?

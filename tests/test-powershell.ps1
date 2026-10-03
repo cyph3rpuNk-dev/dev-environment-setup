@@ -16,6 +16,8 @@ function Parse([string]$Path) {
     return $ast
 }
 try {
+    & $shellExe -NoProfile -File "$root/tests/test-native-github.ps1"
+    Assert ($LASTEXITCODE -eq 0) 'Native GitHub CLI regression suite'
     $template = Get-Content -Raw -Encoding UTF8 "$root/templates/foundation/check.ps1.template"
     $null = New-Item -ItemType Directory -Path "$testRoot/scripts"
     $gate = $template.Replace('{{FORMAT_COMMAND}}', "Write-Error 'simulated failure'").Replace('{{LINT_COMMAND}}', '& missing-audit-command-747').Replace('{{TEST_COMMAND}}', "'continued' | Set-Content continued.txt")
@@ -86,6 +88,11 @@ function Record([string]$Name, $Arguments) {
     $global:Events.Add($Name + ' ' + ($Arguments -join ' '))
     $global:LASTEXITCODE = 0
 }
+function Get-Command {
+    param($Name, $ErrorAction)
+    if ($Name -eq 'rustup' -and $env:TEST_NO_RUSTUP -eq '1') { return }
+    Microsoft.PowerShell.Core\Get-Command $Name -ErrorAction SilentlyContinue
+}
 function code { Record 'code' $args }
 function Get-CimInstance {
     # Machine diagnostics are mocked too: tests must never inspect real hardware.
@@ -129,6 +136,7 @@ exit $result
         Assert ($LASTEXITCODE -eq 0) "Windows $selection profile provisions with mocks"
         $events = Get-Content -Raw "$fixture/events.txt"
         Assert (-not (Test-Path "$fixture/.codex") -and -not (Test-Path "$fixture/.claude")) 'Agent settings require explicit selection'
+        Assert ($events -match 'gh auth status') 'GitHub authentication is checked without agent configuration'
         if ($selection -match 'Rust') {
             Assert ($events -match 'cargo build' -and $events -match 'rust-analyzer') "Windows $selection selection exercises linker and extensions"
         } else {
@@ -146,6 +154,15 @@ exit $result
         Assert ($events -notmatch 'cargo (init|build|install)|rustup component add|code --install|claude mcp add') 'Windows checks never provision selected features'
         Assert (-not (Test-Path "$fixture/.codex") -and -not (Test-Path "$fixture/.claude")) 'Windows checks do not create selected agent settings'
     }
+
+    $fixture = Join-Path $testRoot 'profile-no-rustup'
+    $null = New-Item -ItemType Directory -Path $fixture
+    $savedNoRustup = $env:TEST_NO_RUSTUP
+    try {
+        $env:TEST_NO_RUSTUP = '1'
+        $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Rust' -Inspect | Out-String
+        Assert ($LASTEXITCODE -eq 1 -and ([regex]::Matches($output, 'FAIL.*Rust toolchain installer')).Count -eq 1) 'Missing rustup counts as one required failure'
+    } finally { $env:TEST_NO_RUSTUP = $savedNoRustup }
 
     $fixture = Join-Path $testRoot 'profile-invalid'
     $null = New-Item -ItemType Directory -Path $fixture
@@ -203,7 +220,7 @@ exit $result
     # Helpers invoke these functions, so no real auth lookup or agent can run.
     function gh {
         $global:LASTEXITCODE = 0
-        if ($global:TestOldGh -and $args -contains '--active') { $global:LASTEXITCODE = 1; return }
+        if ($global:TestOldGh -and $args -contains '--active') { $global:LASTEXITCODE = 1; 'unknown flag: --active'; return }
         if ($args[1] -eq 'token') {
             if ($global:TestTokenFailure) { $global:LASTEXITCODE = 1; return }
             if (-not $global:TestEmptyToken) { 'fake-test-token' }
@@ -390,6 +407,8 @@ exit $result
     Assert ($LASTEXITCODE -eq 1 -and [IO.File]::ReadAllText((Join-Path $project 'sentinel')) -eq 'keep') 'Scaffolder never touches an existing project'
     '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name '..\escape' -Parent $np -Environment Windows | Out-Null
     Assert ($LASTEXITCODE -eq 1 -and -not (Test-Path (Join-Path $testRoot 'escape'))) 'Scaffolder rejects unsafe names'
+    '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name '-dash' -Parent $np -Environment Windows | Out-Null
+    Assert ($LASTEXITCODE -eq 1 -and -not (Test-Path (Join-Path $np '-dash'))) 'Scaffolder rejects option-shaped names'
     '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name Asks -Parent $np | Out-Null
     Assert ($LASTEXITCODE -eq 1 -and -not (Test-Path (Join-Path $np 'Asks'))) 'Scaffolder never guesses missing answers'
 

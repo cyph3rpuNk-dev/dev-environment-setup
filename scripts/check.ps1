@@ -39,13 +39,17 @@ try {
     }
     Step 'ShellCheck (when installed)' {
         if (Get-Command shellcheck -ErrorAction SilentlyContinue) {
-            $scripts = @(Get-ChildItem *.sh, helpers/*.sh, scripts/*.sh, tests/*.sh | ForEach-Object { $_.FullName })
+            $scripts = @(Get-ChildItem *.sh, helpers/*.sh, scripts/*.sh, tests/*.sh, templates/foundation/*.sh.template | ForEach-Object { $_.FullName })
             & shellcheck -S warning -x @scripts
         }
         else { Write-Host 'skipped: shellcheck is not installed (CI runs it on Linux)' }
     }
     Step 'PowerShell regression tests' { & $shellExe -NoProfile -File tests/test-powershell.ps1 }
-    Step 'Bash regression tests' { & $bash tests/test-bash.sh }
+    Step 'Bash regression tests' {
+        # Git for Windows launched from PowerShell may inherit only Windows PATH.
+        # Add Bash's own utilities explicitly without loading user shell profiles.
+        & $bash -c 'export PATH="/usr/bin:/bin:$PATH"; exec bash tests/test-bash.sh'
+    }
     Step 'Whitespace' {
         # Compare the effective tracked tree with Git's empty tree. A plain
         # `git diff --check` is a no-op on a clean CI checkout.

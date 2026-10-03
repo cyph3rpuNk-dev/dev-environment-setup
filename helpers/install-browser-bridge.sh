@@ -22,6 +22,12 @@ install_browser_bridge() {
   local bridge="$bin_dir/wslview" profile="$profile_dir/wsl-browser.sh"
   local profile_line="export BROWSER=$bin_dir/wslview"
   [ -f "$source_file" ] || { echo 'Browser bridge source missing.' >&2; return 1; }
+  # Do not hide a distro/user handler found elsewhere on PATH.
+  local existing_bridge
+  existing_bridge=$(command -v wslview 2>/dev/null || true)
+  if [ -n "$existing_bridge" ] && [ "$existing_bridge" != "$bridge" ]; then
+    echo "Preserving existing browser bridge on PATH: $existing_bridge" >&2; return 1
+  fi
   # Replace only the exact legacy shim shipped by this repository.
   if [ -L "$bridge" ]; then
     echo "Preserving custom browser bridge: $bridge" >&2; return 1
@@ -42,7 +48,7 @@ install_browser_bridge() {
     sudo chmod 0644 "$profile" || return 1
   fi
   # Preserve existing handlers, including dangling symlinks.
-  if [ ! -e "$bin_dir/xdg-open" ] && [ ! -L "$bin_dir/xdg-open" ]; then
+  if [ ! -e "$bin_dir/xdg-open" ] && [ ! -L "$bin_dir/xdg-open" ] && ! command -v xdg-open >/dev/null 2>&1; then
     sudo ln -s -- "$bridge" "$bin_dir/xdg-open" || return 1
   fi
   cmp -s "$source_file" "$bridge" && [ -x "$bridge" ] &&

@@ -31,6 +31,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+. (Join-Path $PSScriptRoot 'helpers/github-auth.ps1')
 $script:Failures = 0
 if ($Doctor) { $Check = $true }
 # 'powershell -File' passes "-Stack Rust,Python" as one string, so split commas here
@@ -163,7 +164,7 @@ if (Have 'rustup') {
     if ($msvcHost) { Ok "MSVC host toolchain in use" }
     else { Warn "MSVC host toolchain not detected. For Windows-native Rust use: rustup default stable-x86_64-pc-windows-msvc" }
 }
-else { Bad "rustup not available; the rest of this section is skipped" }
+else { Skip "rustup unavailable (reported in Base tools); component setup skipped" }
 
 if (Have 'rustc') { Ok (rustc --version) }
 
@@ -368,6 +369,7 @@ sandbox = "elevated"
 elseif (Test-Path $codexCfg) {
     Skip "$codexCfg already exists, left alone"
 }
+} # Optional agent defaults
 
 # ---------------------------------------------------------------------------
 Say "7. GitHub credentials"
@@ -378,10 +380,15 @@ Say "7. GitHub credentials"
 # header in Claude's user-scoped MCP configuration.
 $githubAuthenticated = $false
 if (Have 'gh') {
-    gh auth status --hostname github.com --active 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) {
+    $auth = Get-GitHubAuthStatus
+    if ($auth.Authenticated) {
         Ok "GitHub CLI is authenticated"
         $githubAuthenticated = $true
+        switch ($auth.WorkflowScope) {
+            'present' { Ok 'active token has the workflow scope' }
+            'missing' { Warn "active classic token lacks the 'workflow' scope; run: gh auth refresh --hostname github.com --scopes workflow" }
+            default { Warn 'workflow permission could not be determined (older CLI or token without classic scopes); check repository permissions before pushing workflows' }
+        }
     }
     else {
         Warn "GitHub CLI is not authenticated"
@@ -397,6 +404,7 @@ if ([Environment]::GetEnvironmentVariable('GITHUB_MCP_PAT', 'User')) {
 }
 
 # ---------------------------------------------------------------------------
+if ($ConfigureAgents) {
 Say "8. MCP servers"
 
 # --- Claude Code -----------------------------------------------------------
@@ -407,9 +415,8 @@ elseif ($Check) {
     Skip "not adding MCP servers"
 }
 else {
-    $mcp = (claude mcp list 2>$null | Out-String)
-
-    if ($mcp -match 'context7') {
+    claude mcp get context7 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
         Ok "claude: context7 already configured"
     }
     else {
@@ -418,7 +425,8 @@ else {
         else { Bad "claude: could not add context7" }
     }
 
-    if ($mcp -match 'github') { Ok "claude: github already configured" }
+    claude mcp get github 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { Ok "claude: github already configured" }
     else { Skip "claude: github is optional and is not configured automatically; see docs/agents.md" }
 }
 
