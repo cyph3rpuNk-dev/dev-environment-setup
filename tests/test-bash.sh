@@ -79,10 +79,22 @@ check_root / '[automount]\nenabled = true\nroot = "/"  # drives at /c\n'
 check_root /mnt/ '[network]\nroot = /elsewhere/\n'
 check_root /mnt/ '[automount]\nroot = relative/\n'
 check_root /first/ '[automount]\nroot = /first/\nroot = /second/\n'
+# Forms a Windows editor or a hand edit can produce.
+check_root /win/ '\0357\0273\0277[automount]\nroot = /win/\n'
+check_root /win/ '[automount]  # drives\nroot = /win/\n'
+check_root /win/ "[automount]\nroot = '/win/'\n"
+check_root /win/ '[automount]\r\nroot = "/win/"\r\n'
+check_root /mnt/ '[network]  # x\nroot = /win/\n'
 DEVSETUP_WSL_CONF="$TEST_ROOT/missing.conf" wsl_is_windows_path /mnt/c/Users || fail '/mnt/c not recognized as a Windows drive'
 DEVSETUP_WSL_CONF="$TEST_ROOT/missing.conf" wsl_is_windows_path /mnt/d || fail '/mnt/d not recognized as a Windows drive'
 if DEVSETUP_WSL_CONF="$TEST_ROOT/missing.conf" wsl_is_windows_path /mnt/wsl/shared; then fail '/mnt/wsl mistaken for a Windows drive'; fi
 if DEVSETUP_WSL_CONF="$TEST_ROOT/missing.conf" wsl_is_windows_path /home/me/src; then fail 'Linux path mistaken for a Windows drive'; fi
+# A moved root adds a guarded location; the default /mnt/ drives stay guarded too, so a
+# wsl.conf read differently from WSL never removes the default protection.
+printf '[automount]\nroot = /win/\n' > "$TEST_ROOT/moved.conf"
+DEVSETUP_WSL_CONF="$TEST_ROOT/moved.conf" wsl_is_windows_path /win/d/src || fail 'drive under the moved root not recognized'
+DEVSETUP_WSL_CONF="$TEST_ROOT/moved.conf" wsl_is_windows_path /mnt/c/src || fail '/mnt/c no longer guarded after the root moved'
+if DEVSETUP_WSL_CONF="$TEST_ROOT/moved.conf" wsl_is_windows_path /win/data/src; then fail 'non-drive directory under the moved root mistaken for a drive'; fi
 # A configured root reached through a symlink still matches resolved paths, as on
 # macOS where the temporary directory itself is a symlink.
 # Git Bash may copy instead of linking; then the case is skipped and the copy removed.
