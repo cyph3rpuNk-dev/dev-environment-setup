@@ -438,6 +438,8 @@ exit $result
     Assert ($charter -match 'Canonical development environment: WINDOWS' -and $charter -match 'rationale: chosen explicitly' -and $charter -match '\{\{LICENCE_OR_UNDECIDED\}\}') 'Charter records environment and keeps undecided fields'
     Assert ((Get-Content -Raw (Join-Path $project 'scripts/check.ps1')) -match 'cargo clippy' -and (Get-Content -Raw (Join-Path $project '.gitignore')) -match '/target/') 'Rust stack fills the gate and ignore file'
     Assert ((Get-Content -Raw (Join-Path $project 'scripts/check.ps1')) -notmatch 'Copy this gate') 'Scaffolded gate does not tell the reader to copy itself'
+    $output = '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name RustSteps -Parent $np -Environment Windows -Stack Rust | Out-String
+    Assert ($LASTEXITCODE -eq 0 -and $output -match 'cargo init --vcs none') 'Rust next step keeps the scaffolded .gitignore'
 
     '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name Plain -Parent $np -WindowsNative no -LinuxTarget no -NoClaude | Out-Null
     Assert ($LASTEXITCODE -eq 0 -and -not (Test-Path (Join-Path $np 'Plain/CLAUDE.md'))) 'No platform tie stays on Windows and -NoClaude is honoured'
