@@ -122,36 +122,34 @@ for repository work.
 
 - **Context7** (current library documentation) is added by `-ConfigureAgents`. It is
   most useful when a project pins fast-moving libraries.
-- **GitHub MCP** is optional. For Codex, run the bootstrap after `gh auth login`; when
-  creating a new config, it adds a server entry that reads the token from
-  `GITHUB_MCP_PAT`. Existing config files are preserved without parsing or appending;
-  review and merge the entry below manually if needed. Launch Codex
-  through `helpers/codex-with-github-mcp.ps1` or `.sh`, which fetches the token from
-  GitHub CLI and passes it to Codex in its environment instead of writing it to a file.
-  Codex and every command it runs can read that token, and it carries your full GitHub
-  CLI access (usually every repository you can reach, plus workflows if you granted that
-  scope). Use the helper only for sessions that need GitHub MCP; start Codex normally
-  otherwise. Claude's documented GitHub MCP setup stores a
-  personal access token in its user-scoped configuration, so the toolkit never does it
-  automatically. If you accept that, use a fine-grained token limited to the needed
-  repositories and remove or rotate it when finished:
+- **GitHub access** uses `git` and `gh`. Start Codex normally; no MCP launcher or
+  additional credential is required. Check authentication with
+  `gh auth status --hostname github.com --active` (omit `--active` on older CLI builds).
+- **GitHub MCP** is optional and is never configured automatically. If you need it,
+  follow the server and client's current authentication documentation and choose
+  access limited to the required repositories. The toolkit does not copy GitHub CLI
+  credentials into another application's environment or configuration.
 
-  ```bash
-  claude mcp add --transport http --scope user github https://api.githubcopilot.com/mcp/ \
-    --header "Authorization: Bearer <fine-grained-token>"
-  claude mcp list
-  ```
+### Migrate from the retired GitHub MCP launcher
 
-Never put a token in `~/.bashrc`, a persistent Windows user variable or a repository.
+The old `helpers/codex-with-github-mcp.ps1` and `.sh` launchers exported the GitHub CLI
+credential to Codex and all its child commands. They now stop with migration guidance
+without looking up a credential or launching an agent.
 
-For an existing Codex config, merge this table only if an equivalent GitHub server
-entry is not already present. Keep existing customization and never duplicate a table:
+1. Replace shortcuts that call either helper with a normal `codex` invocation.
+2. If your Codex configuration contains the legacy `[mcp_servers.github]` entry with
+   `bearer_token_env_var = "GITHUB_MCP_PAT"`, remove that server's table and its
+   associated subtables. Preserve other servers and customized GitHub configurations.
+   The bootstrap preserves existing config files; it does not perform this migration.
+3. Remove old `GITHUB_MCP_PAT` exports from shell profiles or persistent Windows user
+   variables, if present, and restart affected terminals and agents. Do not print the
+   variable's value. No variable is needed for ordinary `gh` commands.
+4. Confirm `gh auth status --hostname github.com --active` succeeds, then use `gh`
+   directly for GitHub operations.
 
-```toml
-[mcp_servers.github]
-url = "https://api.githubcopilot.com/mcp/"
-bearer_token_env_var = "GITHUB_MCP_PAT"
-```
+Never put a token in a shell profile, a persistent Windows user variable or a repository.
+Using `gh` avoids blanket token inheritance; it does not prevent an authorized process
+from using the GitHub CLI credential store.
 
 ## Habits that matter more than configuration
 

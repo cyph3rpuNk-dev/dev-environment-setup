@@ -21,6 +21,11 @@ doctor with `-Wsl` starts the default WSL distribution to prove it works, becaus
 listed distribution can have a missing disk; that starts a process but installs and
 writes nothing.
 
+Inside WSL, check and doctor modes skip invoking the code launcher: even listing
+extensions can install or replace VS Code Server. Verify remote extensions in a
+connected WSL editor window. A skipped listing is reported explicitly, and the
+Rust doctor reuses the existing listing rather than invoking the editor again.
+
 It does not verify VS Code profile names, interactive Claude/Codex sign-in, live MCP
 connectivity, the Windows Rust linker probe (provisioning runs that), configuration
 schema, or any repository's own gate. Check those by hand:
@@ -39,6 +44,11 @@ install location.
 Missing required tools and missing system packages are failures. Missing optional
 tools, GitHub authentication, Git commit identity and agent configuration are warnings. Exit zero is not
 proof that every optional feature is ready.
+
+Selecting Python makes uv required; selecting Rust requires a working compiler
+version probe. An executable on PATH that fails its version command is a failure.
+The Linux base setup also requires awk for project templates and installs gawk on
+supported Linux distributions when no awk command is available.
 
 To validate changes to this toolkit itself, use `scripts/check.ps1` as described in
 the root README. Its mocked tests are separate from machine readiness checks.

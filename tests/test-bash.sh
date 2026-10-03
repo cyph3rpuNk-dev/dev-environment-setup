@@ -157,6 +157,11 @@ case "$name" in
     if [ "${TEST_PKG_LOCKED:-0}" = 1 ] && [ "$1" = install ]; then
       echo 'E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 412 (unattended-upgr)' >&2
       exit 100
+    fi
+    if [ "$1" = install ] && [ -n "${TEST_AWK_SOURCE:-}" ]; then
+      for package in "$@"; do
+        if [ "$package" = gawk ]; then cp "$TEST_AWK_SOURCE" "${TEST_EVENTS%/*}/utilities/awk"; fi
+      done
     fi ;;
   rpm) if missing "$2"; then exit 1; fi ;;
   dpkg-query) for last; do :; done; if missing "$last"; then exit 1; fi; printf 'install ok installed' ;;
@@ -171,19 +176,17 @@ case "$name" in
   sw_vers) printf '15.0\n' ;;
   xcode-select) [ "${TEST_NO_CLT:-0}" = 1 ] && exit 2; printf '/Library/Developer/CommandLineTools\n' ;;
   rustup) printf 'rustfmt clippy\n' ;;
-  rustc) printf 'rustc 1.85.0\n' ;;
-  uv) printf 'uv 0.9.0\n' ;;
+  rustc) [ "${TEST_BROKEN_RUSTC:-0}" != 1 ] || exit 42; printf 'rustc 1.85.0\n' ;;
+  uv) [ "${TEST_BROKEN_UV:-0}" != 1 ] || exit 43; printf 'uv 0.9.0\n' ;;
   code)
+    if [ "${TEST_CODE_MUTATES:-0}" = 1 ]; then touch "$TEST_EVENTS.server-started"; exit 99; fi
     if [ "$1" = --list-extensions ] && [ "${TEST_CODE_LIST_FAIL:-0}" = 1 ]; then exit 9; fi
     if [ "$1" = --list-extensions ]; then cat "$TEST_EXTENSIONS"
     else printf '%s\n' "$2" >> "$TEST_EXTENSIONS"; fi ;;
   gh)
     version=${TEST_GH_VERSION:-2.45.0}
     if [ "$1" = --version ]; then printf 'gh version %s (2026-01-01)\n' "$version"; exit 0; fi
-    if [ "$2" = token ]; then
-      case "${TEST_TOKEN_MODE:-ok}" in empty) exit 0;; fail) exit 1;; esac
-      printf 'fake-token\n'; exit 0
-    fi
+    if [ "$2" = token ]; then echo 'unexpected token lookup' >&2; exit 99; fi
     # Builds before 2.40 reject --active, as the real CLI does.
     case "$version $*" in 2.[0-3][0-9].*--active*) echo 'unknown flag: --active' >&2; exit 1;; esac
     if [ "${3:-}" = --help ]; then
@@ -211,11 +214,7 @@ case "$name" in
       shift
     done
     exit 22 ;;
-  codex)
-    if [ "${TEST_HELPER:-0}" = 1 ]; then
-      [ "${GITHUB_MCP_PAT:-}" = fake-token ] || exit 91
-      exit 7
-    fi ;;
+  codex) exit 0 ;;
   *) exit 0 ;;
 esac
 MOCK
@@ -243,6 +242,57 @@ grep -q 'package manager: dnf' "$TEST_ROOT/base.log" || fail 'dnf not selected f
 if run_bootstrap fedora native --stack=unknown > "$TEST_ROOT/invalid.log" 2>&1; then fail 'unknown stack accepted'; fi
 [ ! -s "$TEST_EVENTS" ] || fail 'invalid stack performed work'
 pass 'Base excludes optional stacks and agents; invalid stack fails before work'
+
+# The WSL code shim can provision a server even for --list-extensions.
+for mode in --check --doctor; do
+  : > "$TEST_EVENTS"
+  TEST_CODE_MUTATES=1 run_bootstrap fedora wsl "$mode" --stack=rust > "$TEST_ROOT/wsl-editor.log"
+  [ ! -e "$TEST_EVENTS.server-started" ] || fail 'WSL read-only mode initialized the editor server'
+  if grep -q '^code ' "$TEST_EVENTS"; then fail 'WSL read-only mode invoked code'; fi
+  grep -q 'WSL extensions not queried' "$TEST_ROOT/wsl-editor.log" || fail 'WSL editor limitation was hidden'
+done
+pass 'WSL check and doctor never initialize the editor, including the Rust probe'
+
+mv "$TEST_ROOT/utilities/awk" "$TEST_ROOT/awk.saved"
+result=0
+TEST_MISSING_PKGS=gawk run_bootstrap fedora native --check > "$TEST_ROOT/no-awk.log" || result=$?
+[ "$result" -ne 0 ] && grep -q 'awk is required' "$TEST_ROOT/no-awk.log" || fail 'missing awk passed readiness'
+result=0
+env HOME="$TEST_ROOT/user" PATH="$TEST_ROOT/mock-bin:$TEST_ROOT/utilities" \
+  DEVSETUP_KERNEL=Linux DEVSETUP_PROC_VERSION="$TEST_ROOT/os/native" \
+  bash "$ROOT/new-project.sh" --name no-awk --environment linux --parent "$TEST_ROOT/no-awk-parent" \
+  > "$TEST_ROOT/no-awk-scaffold.log" 2>&1 || result=$?
+[ "$result" -ne 0 ] && grep -q 'awk is required' "$TEST_ROOT/no-awk-scaffold.log" || fail 'scaffolder did not preflight awk'
+[ ! -e "$TEST_ROOT/no-awk-parent" ] || fail 'scaffolder staged files before checking awk'
+for os in fedora ubuntu; do
+  : > "$TEST_EVENTS"
+  TEST_ALLOW_SUDO=1 TEST_MISSING_PKGS=gawk TEST_AWK_SOURCE="$TEST_ROOT/awk.saved" \
+    run_bootstrap "$os" native > "$TEST_ROOT/awk-install.log"
+  grep -Eq '^(dnf|apt-get) install -y .*gawk' "$TEST_EVENTS" || fail 'missing awk package not installed'
+  [ -x "$TEST_ROOT/utilities/awk" ] || fail 'awk unavailable after package installation'
+  rm "$TEST_ROOT/utilities/awk"
+done
+mv "$TEST_ROOT/awk.saved" "$TEST_ROOT/utilities/awk"
+pass 'Minimal Linux installs awk; scaffolding fails before writes when awk is unavailable'
+
+mv "$TEST_ROOT/mock-bin/uv" "$TEST_ROOT/uv.saved"
+for mode in --check --doctor; do
+  result=0
+  run_bootstrap fedora native "$mode" --stack=python > "$TEST_ROOT/no-uv.log" || result=$?
+  [ "$result" -ne 0 ] && grep -q 'uv not installed' "$TEST_ROOT/no-uv.log" || fail 'missing selected Python runtime passed readiness'
+done
+mv "$TEST_ROOT/uv.saved" "$TEST_ROOT/mock-bin/uv"
+for mode in --check --doctor; do
+  result=0
+  TEST_BROKEN_RUSTC=1 run_bootstrap fedora native "$mode" --stack=rust > "$TEST_ROOT/broken-rust.log" || result=$?
+  [ "$result" -ne 0 ] && grep -q 'rustc --version failed' "$TEST_ROOT/broken-rust.log" || fail 'broken compiler passed readiness'
+  result=0
+  TEST_BROKEN_UV=1 run_bootstrap fedora native "$mode" --stack=python > "$TEST_ROOT/broken-uv.log" || result=$?
+  [ "$result" -ne 0 ] && grep -q 'uv --version failed' "$TEST_ROOT/broken-uv.log" || fail 'broken uv passed readiness'
+done
+pass 'Selected runtimes must exist and pass version probes in check and doctor modes'
+
+: > "$TEST_EVENTS"
 run_bootstrap fedora wsl --no-sudo --stack=rust --configure-agents > "$TEST_ROOT/first.log"
 grep -q '^rustup component add' "$TEST_EVENTS" || fail 'Rust selection skipped components'
 grep -q 'rust-analyzer' "$TEST_EVENTS" || fail 'Rust selection skipped extensions'
@@ -254,7 +304,7 @@ done
 run_bootstrap fedora wsl --no-sudo --stack=rust --configure-agents > "$TEST_ROOT/second.log"
 cmp -s "$TEST_ROOT/config.before" "$TEST_ROOT/user/.codex/config.toml" || fail 'Codex config changed on rerun'
 cmp -s "$TEST_ROOT/settings.before" "$TEST_ROOT/user/.claude/settings.json" || fail 'Claude config changed on rerun'
-[ "$(grep -c '^\[mcp_servers.github\]' "$TEST_ROOT/user/.codex/config.toml")" -eq 1 ] || fail 'GitHub table duplicated'
+if grep -Eq 'mcp_servers\.github|GITHUB_MCP_PAT' "$TEST_ROOT/user/.codex/config.toml"; then fail 'new config enabled GitHub MCP credential inheritance'; fi
 if grep -Eq '^(sudo|dnf|apt-get) ' "$TEST_EVENTS"; then fail '--no-sudo invoked privilege escalation'; fi
 pass 'First run and rerun preserve configuration and honor --no-sudo'
 printf '# [mcp_servers.github] is only a comment\n' > "$TEST_ROOT/user/.codex/config.toml"
@@ -504,19 +554,17 @@ run_bootstrap fedora native --stack= > /dev/null 2>&1 || result=$?
 [ "$result" -eq 1 ] || fail 'empty stack list accepted'
 pass 'bootstrap-macos.sh is a working entry point; an empty stack list fails cleanly'
 
-for mode in ok empty fail; do
+for legacy_token in '' fake-existing-token; do
+  : > "$TEST_EVENTS"
   result=0
-  env PATH="$TEST_ROOT/mock-bin:/usr/bin:/bin" TEST_HELPER=1 TEST_TOKEN_MODE="$mode" \
-    bash "$ROOT/helpers/codex-with-github-mcp.sh" > "$TEST_ROOT/helper.log" 2>&1 || result=$?
-  if [ "$mode" = ok ]; then [ "$result" -eq 7 ] || fail 'helper lost child exit code'
-  else [ "$result" -eq 1 ] || fail 'helper accepted missing token'; fi
+  env PATH="$TEST_ROOT/mock-bin:/usr/bin:/bin" GITHUB_MCP_PAT="$legacy_token" \
+    bash "$ROOT/helpers/codex-with-github-mcp.sh" --version > "$TEST_ROOT/helper.log" 2>&1 || result=$?
+  [ "$result" -eq 1 ] || fail 'retired launcher returned success'
+  [ ! -s "$TEST_EVENTS" ] || fail 'retired launcher invoked a command'
+  grep -q 'launcher is retired' "$TEST_ROOT/helper.log" || fail 'migration guidance missing'
+  if grep -q 'fake-existing-token' "$TEST_ROOT/helper.log"; then fail 'retired launcher printed a credential'; fi
 done
-pass 'Bash credential helper passes child status and rejects absent tokens'
-result=0
-env PATH="$TEST_ROOT/mock-bin:/usr/bin:/bin" TEST_HELPER=1 TEST_GH_VERSION=2.23.0 \
-  bash "$ROOT/helpers/codex-with-github-mcp.sh" > "$TEST_ROOT/helper-old.log" 2>&1 || result=$?
-[ "$result" -eq 7 ] || fail 'helper rejected an authenticated older GitHub CLI'
-pass 'Credential helper supports authenticated older GitHub CLI builds'
+pass 'Retired Bash launcher never calls gh or Codex and prints only migration guidance'
 
 mkdir -p "$TEST_ROOT/project/scripts"
 sed -e 's/{{FORMAT_COMMAND}}/false/' -e 's/{{LINT_COMMAND}}/missing-audit-command-747/' \

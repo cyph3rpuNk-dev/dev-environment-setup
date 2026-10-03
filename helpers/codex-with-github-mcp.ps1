@@ -1,43 +1,7 @@
-# Start Codex with a GitHub MCP token taken from GitHub CLI's credential store.
-# The token is set for this process and the Codex process only, not the user environment.
-# Codex and every command it runs inherit it, with the token's full GitHub CLI access.
+# Keep old shortcuts actionable without reading credentials or starting Codex.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'CodexArgs', Justification = 'Retired entry point accepts legacy arguments only to report migration guidance.')]
 [CmdletBinding()]
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$CodexArgs)
 
-$ErrorActionPreference = 'Stop'
-# Preserve the child's exit status even if the caller enabled PS 7 native errors.
-$PSNativeCommandUseErrorActionPreference = $false
-$githubAuthHelper = Join-Path $PSScriptRoot 'github-auth.ps1'
-try { . $githubAuthHelper }
-catch {
-    # A file extracted from a downloaded ZIP can keep Windows' "blocked" mark.
-    throw "Could not load $githubAuthHelper ($($_.Exception.Message)). If the toolkit came from a downloaded ZIP, inspect that file, then run: Unblock-File -LiteralPath '$githubAuthHelper'"
-}
-if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
-    throw "Codex CLI is required. Install it before using this helper."
-}
-if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-    throw "GitHub CLI is required. Install it, authenticate with gh auth login, then retry."
-}
-$auth = Get-GitHubAuthStatus
-if (-not $auth.Authenticated) {
-    throw "GitHub CLI is not authenticated. Run: gh auth login --hostname github.com --git-protocol https --web"
-}
-$tokenResult = Invoke-GitHubCli -Arguments @('auth', 'token', '--hostname', 'github.com')
-$token = $tokenResult.Output.Trim()
-if ($tokenResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($token)) {
-    throw "GitHub CLI did not provide a token."
-}
-$previousToken = $env:GITHUB_MCP_PAT
-$codexExitCode = 1
-try {
-    $env:GITHUB_MCP_PAT = $token
-    & codex @CodexArgs
-    $codexExitCode = $LASTEXITCODE
-}
-finally {
-    $env:GITHUB_MCP_PAT = $previousToken
-    $token = $null
-    $tokenResult = $null
-}
-exit $codexExitCode
+Write-Error 'This GitHub MCP launcher is retired. Start codex normally and use gh for GitHub work. Remove the legacy GitHub MCP entry and GITHUB_MCP_PAT exports; see docs/agents.md.' -ErrorAction Continue
+exit 1

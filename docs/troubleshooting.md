@@ -169,7 +169,8 @@ terminal.
 
 For GitHub, first run `gh auth status --hostname github.com --active`. Claude's stored
 header is separate from GitHub CLI and is not refreshed by the bootstrap; replace it
-manually. For Codex, launch through `helpers/codex-with-github-mcp.*`. For any server,
+manually. The Codex GitHub MCP launcher is retired: start Codex normally, use `gh`,
+and follow the migration steps in [docs/agents.md](agents.md) for an old MCP entry. For any server,
 `claude mcp get <name>` gives more detail than `list`.
 
 ### An agent ignores a rule
