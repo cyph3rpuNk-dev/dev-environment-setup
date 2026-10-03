@@ -8,9 +8,10 @@ param()
 
 # Split multiple native commands into separate Steps so none masks another.
 $ErrorActionPreference = 'Stop'
-# Refuse to run until every placeholder is replaced. An unreplaced step would
-# otherwise parse as an empty script block and report success.
-if ((Get-Content -Raw -LiteralPath $PSCommandPath) -match '\{\{[A-Z_]+\}\}') {
+# Refuse to run until the three command placeholders are replaced. An unreplaced step
+# would otherwise parse as an empty script block and report success. Other {{...}}
+# text in a real command is allowed.
+if ((Get-Content -Raw -LiteralPath $PSCommandPath) -match '\{\{(FORMAT|LINT|TEST)_COMMAND\}\}') {
     Write-Host 'FAIL: replace the remaining {{...}} placeholders in this gate first.'
     exit 1
 }
