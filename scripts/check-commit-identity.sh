@@ -44,7 +44,9 @@ while IFS= read -r sha; do
     echo "FAIL $label: committer $(git log -1 --format='%cn <%ce>' "$sha") is not allowed"
     failures=$((failures + 1))
   fi
-  if git log -1 --format=%B "$sha" | grep -qiE "$attribution"; then
+  # Git Bash can classify emoji as alphanumeric in C.UTF-8. Match these ASCII
+  # policy markers bytewise so Unicode prefixes cannot bypass attribution checks.
+  if git log -1 --format=%B "$sha" | LC_ALL=C grep -qiE "$attribution"; then
     echo "FAIL $label: message contains a co-author or attribution line"
     failures=$((failures + 1))
   fi
