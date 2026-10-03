@@ -4,16 +4,22 @@
 # file for the offline tests.
 
 # Print the drive mount root with a trailing slash, for example /mnt/ or /windows/.
+# Tolerates a UTF-8 byte-order mark (Windows editors add one), a comment after the
+# section header, and single or double quotes around the value.
 wsl_drive_root() {
   local root
-  root=$(awk '
-    /^[[:space:]]*\[/ { section = tolower($0); gsub(/[[:space:]]/, "", section); next }
+  root=$(BOM=$(printf '\357\273\277') QUOTE="'" awk '
+    NR == 1 && index($0, ENVIRON["BOM"]) == 1 { $0 = substr($0, length(ENVIRON["BOM"]) + 1) }
+    /^[[:space:]]*\[/ {
+      section = tolower($0); sub(/\].*$/, "]", section); gsub(/[[:space:]]/, "", section); next
+    }
     section == "[automount]" && index($0, "=") > 0 {
       key = tolower(substr($0, 1, index($0, "=") - 1)); gsub(/[[:space:]]/, "", key)
       if (key != "root") next
       value = substr($0, index($0, "=") + 1)
       sub(/[[:space:]]+#.*$/, "", value)
-      gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", value)
+      q = ENVIRON["QUOTE"]
+      gsub("^[[:space:]\"" q "]+|[[:space:]\"" q "]+$", "", value)
       print value; exit
     }' "${DEVSETUP_WSL_CONF:-/etc/wsl.conf}" 2>/dev/null)
   # Only an absolute root is meaningful; anything else means the default.
@@ -23,14 +29,17 @@ wsl_drive_root() {
 }
 
 # Succeed when an absolute, already-resolved path is on a mounted Windows drive.
+# The default /mnt/ is always checked as well as the configured root, so a wsl.conf
+# that is read differently from how WSL reads it never removes the default guard.
 wsl_is_windows_path() {
-  local root real
-  root=$(wsl_drive_root)
-  case "${1%/}/" in "$root"[A-Za-z]/*) return 0 ;; esac
-  # Callers pass a resolved path, so also compare with the root's resolved path in
-  # case the configured root is reached through a symbolic link.
-  real=$(cd -P -- "$root" 2>/dev/null && pwd -P) || return 1
-  case "${1%/}/" in "${real%/}/"[A-Za-z]/*) return 0 ;; esac
+  local root real path="${1%/}/"
+  for root in "$(wsl_drive_root)" /mnt/; do
+    case "$path" in "$root"[A-Za-z]/*) return 0 ;; esac
+    # Callers pass a resolved path, so also compare with the root's resolved path in
+    # case the root is reached through a symbolic link.
+    real=$(cd -P -- "$root" 2>/dev/null && pwd -P) || continue
+    case "$path" in "${real%/}/"[A-Za-z]/*) return 0 ;; esac
+  done
   return 1
 }
 
