@@ -8,9 +8,8 @@ somewhere other than their cause.
 ### A downloaded script is blocked
 
 Windows marks files downloaded from the internet, and files extracted from a downloaded
-ZIP can keep that mark. `bootstrap-windows.ps1` and `helpers\codex-with-github-mcp.ps1`
-both load `helpers\github-auth.ps1`, so inspect the script you run and that helper,
-then remove the mark from those files only:
+ZIP can keep that mark. `bootstrap-windows.ps1` loads `helpers\github-auth.ps1`, so
+inspect both files, then remove the mark from those files only:
 
 ```powershell
 Unblock-File .\bootstrap-windows.ps1, .\helpers\github-auth.ps1

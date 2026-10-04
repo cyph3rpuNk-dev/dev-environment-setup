@@ -30,7 +30,9 @@ uv run pytest -q
 ```
 
 `new-project.sh --stack python` (or `new-project.ps1 -Stack Python`) pre-fills the gate
-with the last three commands. Pin the Python version deliberately in
+with the last three commands. pytest exits with status 5 when it collects no tests, so
+add a first test before running the gate, or delete the gate's test line until then and
+record that under "Open decisions" in the charter. Pin the Python version deliberately in
 `.python-version` and `pyproject.toml` rather than accepting the generator's default;
 check deployment and library compatibility first. Commit `uv.lock` and change it only
 through uv.

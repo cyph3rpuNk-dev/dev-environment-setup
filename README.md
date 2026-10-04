@@ -75,9 +75,9 @@ cd ~/dev-environment-setup
 ```
 
 Without Git, use GitHub's **Code > Download ZIP** and extract it to the same place.
-Files extracted from a downloaded ZIP can be marked as blocked. The Windows scripts
-load `helpers\github-auth.ps1`, so inspect it together with the script you run, then
-unblock both, for example `Unblock-File .\bootstrap-windows.ps1, .\helpers\github-auth.ps1`.
+Files extracted from a downloaded ZIP can be marked as blocked. `bootstrap-windows.ps1`
+loads `helpers\github-auth.ps1`, so inspect both files, then unblock both, for example
+`Unblock-File .\bootstrap-windows.ps1, .\helpers\github-auth.ps1`.
 
 ## Quick start
 

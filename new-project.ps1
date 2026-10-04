@@ -211,7 +211,12 @@ Write-Host 'Next steps:'
 Write-Host "  1. cd $target"
 Write-Host '  2. Fill in PROJECT-CHARTER.md. Leave unknown answers as visible open decisions.'
 switch ($Stack) {
-    'Python' { Write-Host '  3. uv init --app .   then   uv add --dev ruff pytest   (review the generated files)' }
+    'Python' {
+        Write-Host '  3. uv init --app .   then   uv add --dev ruff pytest   (review the generated files)'
+        # pytest exits 5 when it collects nothing, so a fresh project's gate cannot pass yet.
+        Write-Host '     pytest fails when it finds no tests: add a first test before step 5, or delete'
+        Write-Host '     the gate''s test line and record that under "Open decisions" in PROJECT-CHARTER.md.'
+    }
     # --vcs none: Git and .gitignore already exist; plain cargo init appends a second /target entry.
     'Rust' { Write-Host '  3. cargo init --vcs none   (review the generated manifest and add rust-toolchain.toml deliberately)' }
     default { Write-Host '  3. Choose a stack, then replace the placeholders in scripts/check.ps1 with its commands.' }
