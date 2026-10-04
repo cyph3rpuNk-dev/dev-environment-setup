@@ -38,7 +38,15 @@ sudo() { "$@"; }
 install_browser_bridge "$ROOT/helpers/wslview.sh" "$TEST_ROOT/bin" "$TEST_ROOT/profile"
 cmp -s "$ROOT/helpers/wslview.sh" "$TEST_ROOT/bin/wslview" || fail 'legacy upgrade failed'
 pass 'Exact legacy bridge upgrades to the safe implementation'
-if bash "$ROOT/helpers/wslview.sh" 'file:///sensitive'; then fail 'non-web URL accepted'; fi
+# A reachable fake powershell.exe proves the scheme check stops before Windows runs.
+mkdir -p "$TEST_ROOT/fake-ps-scheme"
+printf '#!/bin/sh\ntouch "%s/ps-invoked"\n' "$TEST_ROOT" > "$TEST_ROOT/fake-ps-scheme/powershell.exe"
+chmod +x "$TEST_ROOT/fake-ps-scheme/powershell.exe"
+result=0
+DEVSETUP_WSL_POWERSHELL="$TEST_ROOT/fake-ps-scheme/powershell.exe" \
+  bash "$ROOT/helpers/wslview.sh" 'file:///sensitive' > "$TEST_ROOT/scheme.log" 2>&1 || result=$?
+[ "$result" -ne 0 ] && grep -q 'Only http and https URLs are supported' "$TEST_ROOT/scheme.log" \
+  && [ ! -e "$TEST_ROOT/ps-invoked" ] || fail 'non-web URL accepted or passed to PowerShell'
 pass 'Bash bridge rejects non-web URLs before invoking Windows'
 # The bridge finds powershell.exe on PATH when it is not at the usual /mnt/c path.
 # A fake records what it receives; the real one is never reachable here.
@@ -127,8 +135,10 @@ unset -f sudo
 mkdir -p "$TEST_ROOT/mock-bin" "$TEST_ROOT/user" "$TEST_ROOT/os"
 # A narrow utility PATH prevents missing mocks from falling through to real tools
 # such as uv or rustup installed on the test host. Wrappers also work in Git Bash.
+# sh must be present: without it a downloaded installer could never run, and the
+# test that partial downloads are never executed would pass vacuously.
 mkdir -p "$TEST_ROOT/utilities"
-for utility in bash awk cat chmod cmp cp dirname env grep head ls mkdir mktemp mv rm sed tr uname touch; do
+for utility in bash sh awk cat chmod cmp cp dirname env grep head ls mkdir mktemp mv rm sed tr uname touch; do
   utility_path=$(command -v "$utility") || fail "test dependency unavailable: $utility"
   printf '#!/bin/sh\nexec "%s" "$@"\n' "$utility_path" > "$TEST_ROOT/utilities/$utility"
   chmod +x "$TEST_ROOT/utilities/$utility"
@@ -389,6 +399,15 @@ grep -q 'src does not exist yet' "$TEST_ROOT/doctor.log" || fail 'WSL doctor did
 grep -q 'Git commit name or email is not set' "$TEST_ROOT/doctor.log" || fail 'doctor did not report a missing Git identity'
 if grep -Eq '^git config --global user\.' "$TEST_EVENTS"; then fail 'doctor wrote Git identity'; fi
 pass 'Doctor performs no provisioning or configuration writes'
+# Earlier runs already wrote agent configuration, so prove check and doctor create
+# none on a home that has none yet.
+mv "$TEST_ROOT/user/.codex" "$TEST_ROOT/codex.aside"; mv "$TEST_ROOT/user/.claude" "$TEST_ROOT/claude.aside"
+for mode in --check --doctor; do
+  run_bootstrap fedora native "$mode" --configure-agents > /dev/null 2>&1 || true
+  [ ! -e "$TEST_ROOT/user/.codex" ] && [ ! -e "$TEST_ROOT/user/.claude" ] || fail "$mode created agent configuration"
+done
+mv "$TEST_ROOT/codex.aside" "$TEST_ROOT/user/.codex"; mv "$TEST_ROOT/claude.aside" "$TEST_ROOT/user/.claude"
+pass 'Check and doctor create no agent configuration on a fresh home'
 # Read-only modes must not run shell code from the user's home, even rustup's env file.
 mkdir -p "$TEST_ROOT/user/.cargo"
 printf 'touch "%s"\n' "$TEST_ROOT/cargo-env-ran" > "$TEST_ROOT/user/.cargo/env"
@@ -723,9 +742,14 @@ result=0; (cd "$NP/plain" && ./scripts/check.sh) > "$TEST_ROOT/np-gate.log" 2>&1
 pass 'Scaffolded gate without a chosen stack refuses to run'
 result=0; new_project --name wintool --parent "$NP" --windows-native yes --linux-target no > "$TEST_ROOT/np-win.log" || result=$?
 [ "$result" -eq 3 ] && [ ! -e "$NP/wintool" ] && grep -q 'new-project.ps1' "$TEST_ROOT/np-win.log" || fail 'Windows project was created on Linux'
+# Refusals happen up front: the user sees why, and no staging directory is left.
+stage_count() { set -- "$NP"/.devsetup-stage.*; if [ -e "$1" ]; then echo "$#"; else echo 0; fi; }
 printf 'keep\n' > "$NP/demo/sentinel"
-result=0; new_project --name demo --parent "$NP" --environment linux > /dev/null 2>&1 || result=$?
+stages=$(stage_count)
+result=0; new_project --name demo --parent "$NP" --environment linux > "$TEST_ROOT/np-existing.log" 2>&1 || result=$?
 [ "$result" -eq 1 ] && grep -qx keep "$NP/demo/sentinel" || fail 'scaffolder touched an existing project'
+grep -q 'not an empty directory; nothing was changed' "$TEST_ROOT/np-existing.log" && [ "$(stage_count)" = "$stages" ] \
+  || fail 'existing project was not refused before staging'
 result=0; new_project --name ../escape --parent "$NP" --environment linux > /dev/null 2>&1 || result=$?
 [ "$result" -eq 1 ] && [ ! -e "$TEST_ROOT/escape" ] || fail 'unsafe name accepted'
 result=0; new_project --name -dash --parent "$NP" --environment linux > /dev/null 2>&1 || result=$?
@@ -818,8 +842,11 @@ pass 'A concurrent writer prevents publication and its files survive'
 # Native Unix supports real symlinks; Git Bash may require Windows privileges.
 mkdir -p "$NP/link-target"
 if ln -s "$NP/link-target" "$NP/linked" 2>/dev/null && [ -L "$NP/linked" ]; then
-  result=0; new_project --name linked --parent "$NP" --environment linux > /dev/null 2>&1 || result=$?
+  stages=$(stage_count)
+  result=0; new_project --name linked --parent "$NP" --environment linux > "$TEST_ROOT/np-linked.log" 2>&1 || result=$?
   [ "$result" -ne 0 ] && [ -z "$(ls -A -- "$NP/link-target")" ] || fail 'target symlink was followed'
+  grep -q 'is a symbolic link; nothing was changed' "$TEST_ROOT/np-linked.log" && [ "$(stage_count)" = "$stages" ] \
+    || fail 'symlinked destination was not refused before staging'
   pass 'Scaffolder refuses a symlink at the final project directory'
 else
   echo 'SKIP: host cannot create a real symbolic link'
