@@ -329,6 +329,8 @@ exit $result
                 $env:TEST_BROKEN_RUSTC = if ($missing -eq 'broken-toolchain') { '1' } else { $null }
                 $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Rust' ("-" + $mode) | Out-String
                 $expected = if ($missing -eq 'rustfmt clippy') { 2 } else { 1 }
+                # The real doctor also rejects running the Windows bootstrap on another OS.
+                if ($mode -eq 'Diagnose' -and $env:OS -ne 'Windows_NT') { $expected++ }
                 Assert ($LASTEXITCODE -eq $expected) "Windows $mode counts $missing exactly once per cause"
                 if ($missing -eq 'query') { Assert ($output -match 'could not query installed Rust components') 'Component query error is reported' }
                 elseif ($missing -ne 'broken-toolchain') {
