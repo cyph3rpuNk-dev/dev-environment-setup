@@ -39,6 +39,36 @@ try {
     $env:TEST_POWERSHELL = $shellExe
     & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1"
     Assert ($LASTEXITCODE -eq 1) 'Gate counts native failure without contaminating later cmdlets'
+    # cargo and uv write normal progress to stderr. A native step that succeeds must
+    # pass however the gate runs: in a fresh process with captured output (as agents
+    # run it), in-process with its streams redirected, and in a hosted runspace like
+    # the non-console hosts editors use.
+    $gate = $template.Replace('{{FORMAT_COMMAND}}', '& $env:TEST_POWERSHELL -NoProfile -Command "[Console]::Error.WriteLine(''progress on stderr''); exit 0"').Replace('{{LINT_COMMAND}}', "Write-Output 'linted'").Replace('{{TEST_COMMAND}}', "Write-Output 'tested'")
+    [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $gate, $utf8)
+    # Capture with OS pipes as an agent does. PowerShell's own 2>&1 here would turn the
+    # relayed stderr into an error in this harness under Windows PowerShell 5.1.
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $shellExe
+    $start.Arguments = '-NoProfile -File "' + "$testRoot/scripts/check.ps1" + '"'
+    $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::Start($start)
+    $stderrRead = $process.StandardError.ReadToEndAsync()
+    $output = $process.StandardOutput.ReadToEnd() + $stderrRead.Result
+    $process.WaitForExit()
+    Assert ($process.ExitCode -eq 0 -and $output -notmatch 'FAIL' -and $output -match 'progress on stderr') 'Gate passes a native step that writes to stderr in a fresh process, and shows it'
+    Push-Location -LiteralPath $testRoot
+    try {
+        $output = & "$testRoot/scripts/check.ps1" *>&1 | Out-String
+        Assert ($LASTEXITCODE -eq 0 -and $output -notmatch 'FAIL' -and $output -match 'progress on stderr') 'Gate passes a native step that writes to stderr in-process with redirected streams, and shows it'
+    } finally { Pop-Location }
+    $hosted = [powershell]::Create()
+    try {
+        $null = $hosted.AddScript("`$output = & '$testRoot/scripts/check.ps1' *>&1 | Out-String; [pscustomobject]@{ ExitCode = `$LASTEXITCODE; Output = `$output }")
+        $result = @($hosted.Invoke())[-1]
+        Assert ($result.ExitCode -eq 0 -and $result.Output -notmatch 'FAIL' -and $result.Output -match 'progress on stderr') 'Gate passes a native step that writes to stderr in a hosted runspace, and shows it'
+    } finally { $hosted.Dispose() }
     [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $template, $utf8)
     $output = & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" | Out-String
     Assert ($LASTEXITCODE -eq 1 -and $output -match 'placeholders') 'Unfilled PowerShell gate refuses to report success'
