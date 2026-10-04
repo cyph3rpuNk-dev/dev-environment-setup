@@ -206,7 +206,8 @@ exit $result
     $null = New-Item -ItemType Directory -Path $fixture
     $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" (Join-Path $blockedRoot 'bootstrap-windows.ps1') $fixture 'Base' -Inspect | Out-String
     Assert ($LASTEXITCODE -eq 1 -and $output -match 'GitHub sign-in was not checked' -and $output -match 'simulated blocked file' -and $output -match 'Unblock-File -LiteralPath' -and $output -notmatch 'GitHub CLI is not authenticated') 'Unloadable GitHub helper is reported by name'
-    $output = & (Join-Path $blockedRoot 'helpers/codex-with-github-mcp.ps1') 2>&1 | Out-String
+    $output = & (Join-Path $blockedRoot 'helpers/codex-with-github-mcp.ps1') 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String -Width 18
     Assert ($LASTEXITCODE -eq 1 -and $output -match 'launcher is retired' -and $output -notmatch 'simulated blocked file') 'Retired launcher never loads the GitHub credential helper'
 
 
@@ -290,7 +291,8 @@ exit $result
     try {
         foreach ($initial in @($null, 'fake-existing-token')) {
             $env:GITHUB_MCP_PAT = $initial
-            $output = & "$root/helpers/codex-with-github-mcp.ps1" --version 2>&1 | Out-String
+            $output = & "$root/helpers/codex-with-github-mcp.ps1" --version 2>&1 |
+                ForEach-Object { $_.ToString() } | Out-String -Width 18
             Assert ($LASTEXITCODE -eq 1 -and $output -match 'launcher is retired') 'Retired launcher fails with migration guidance'
             Assert ($env:GITHUB_MCP_PAT -eq $initial) 'Retired launcher leaves caller environment unchanged'
             Assert ($output -notmatch 'fake-existing-token') 'Retired launcher never prints credentials'
