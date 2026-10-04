@@ -47,7 +47,10 @@ $status = Get-GitHubAuthStatus
 Write-Output ("AUTH=" + $status.Authenticated + " SCOPE=" + $status.WorkflowScope)
 $env:GITHUB_MCP_PAT = 'fake-previous-token'
 try {
-    & (Join-Path $Root 'helpers/codex-with-github-mcp.ps1') 2>&1 | Out-String | Write-Output
+    # Read the ErrorRecord message before formatting; Windows PowerShell wraps it.
+    # A narrow formatter ensures this assertion never depends on console width.
+    & (Join-Path $Root 'helpers/codex-with-github-mcp.ps1') 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String -Width 18 | Write-Output
     $result = $LASTEXITCODE
 } catch {
     Write-Output $_.Exception.Message
