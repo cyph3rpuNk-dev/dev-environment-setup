@@ -60,18 +60,38 @@ function Bad  ($m) { Write-Host "  FAIL  $m" -ForegroundColor Red; $script:Failu
 function Have ($c) { [bool](Get-Command $c -ErrorAction SilentlyContinue) }
 
 # Rust proxies can install a project-selected toolchain even for --version.
-# Limit the override to the probe and restore it even if the command throws.
+# Check and doctor describe the machine, so probes run from a drive root with
+# automatic installation disabled: a project's rust-toolchain.toml or directory
+# override can neither select nor install a toolchain, even on rustup before
+# 1.28.1, which ignores RUSTUP_AUTO_INSTALL. Both settings are restored even if
+# the command throws.
 function Invoke-RustProbe {
     param([string]$Command, [string[]]$Arguments)
     $previousAutoInstall = $env:RUSTUP_AUTO_INSTALL
+    $enteredNeutral = $false
     try {
-        if ($Check) { $env:RUSTUP_AUTO_INSTALL = '0' }
+        if ($Check) {
+            $env:RUSTUP_AUTO_INSTALL = '0'
+            $neutral = [IO.Path]::GetPathRoot([IO.Path]::GetTempPath())
+            Push-Location -LiteralPath $neutral -ErrorAction SilentlyContinue
+            if (-not $?) { return [pscustomobject]@{ ExitCode = -1; Output = '' } }
+            $enteredNeutral = $true
+        }
         $PSNativeCommandUseErrorActionPreference = $false
         $output = @(& $Command @Arguments 2>$null)
         [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join "`n") }
     }
-    finally { $env:RUSTUP_AUTO_INSTALL = $previousAutoInstall }
+    finally {
+        if ($enteredNeutral) { Pop-Location }
+        $env:RUSTUP_AUTO_INSTALL = $previousAutoInstall
+    }
 }
+
+# Codex reads its configuration from CODEX_HOME when that is set and non-empty,
+# and then refuses to start unless it is an existing directory.
+$codexHomeSet = -not [string]::IsNullOrEmpty($env:CODEX_HOME)
+$codexDir = if ($codexHomeSet) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
+$codexCfg = Join-Path $codexDir 'config.toml'
 
 # Agents and Node-based tools reject a UTF-8 byte-order mark in JSON, and Windows
 # PowerShell 5.1 writes one for -Encoding UTF8. Write configuration without it.
@@ -374,9 +394,12 @@ Say "6. Agent CLIs"
 if (Have 'claude') { Ok "claude found" } else { Warn "claude CLI not found. Install it (see START-HERE.md), then run 'claude' once to sign in." }
 if (Have 'codex')  { Ok "codex found" }  else { Warn "codex CLI not found. Install it (see START-HERE.md), then run 'codex' once to sign in." }
 
-$codexDir = Join-Path $env:USERPROFILE '.codex'
-$codexCfg = Join-Path $codexDir 'config.toml'
-if (-not $Check -and -not (Test-Path $codexCfg)) {
+# A CODEX_HOME that is not a directory is reported, not created: a mistyped
+# value must not become a folder.
+if ($codexHomeSet -and -not (Test-Path -LiteralPath $codexDir -PathType Container)) {
+    Warn "CODEX_HOME is set to $codexDir, which is not a directory; Codex will not start until it exists. Configuration not written."
+}
+elseif (-not $Check -and -not (Test-Path -LiteralPath $codexCfg)) {
     try {
         New-Item -ItemType Directory -Force -Path $codexDir -ErrorAction Stop | Out-Null
         Write-ConfigFile $codexCfg @'
@@ -400,7 +423,7 @@ sandbox = "elevated"
     }
     catch { Bad "could not write ${codexCfg}: $_" }
 }
-elseif (Test-Path $codexCfg) {
+elseif (Test-Path -LiteralPath $codexCfg) {
     Skip "$codexCfg already exists, left alone"
 }
 } # Optional agent defaults
@@ -437,11 +460,10 @@ if ([Environment]::GetEnvironmentVariable('GITHUB_MCP_PAT', 'User')) {
 }
 # Report, never edit: the retired launcher's Codex entry forwarded GITHUB_MCP_PAT.
 # Lines with a '#' before the key are comments and do not count.
-$legacyCodexCfg = Join-Path (Join-Path $env:USERPROFILE '.codex') 'config.toml'
 $legacyCodexPattern = '^[^#]*bearer_token_env_var\s*=\s*["'']GITHUB_MCP_PAT["'']'
-if ((Test-Path -LiteralPath $legacyCodexCfg -PathType Leaf) -and
-    (Select-String -LiteralPath $legacyCodexCfg -Pattern $legacyCodexPattern -CaseSensitive -Quiet -ErrorAction SilentlyContinue)) {
-    Warn "Legacy Codex GitHub MCP entry (bearer_token_env_var = `"GITHUB_MCP_PAT`") detected in $legacyCodexCfg."
+if ((Test-Path -LiteralPath $codexCfg -PathType Leaf) -and
+    (Select-String -LiteralPath $codexCfg -Pattern $legacyCodexPattern -CaseSensitive -Quiet -ErrorAction SilentlyContinue)) {
+    Warn "Legacy Codex GitHub MCP entry (bearer_token_env_var = `"GITHUB_MCP_PAT`") detected in $codexCfg."
     Warn "  remove that server's table; see 'Migrate from the retired GitHub MCP launcher' in docs\agents.md"
 }
 
@@ -575,7 +597,7 @@ if ($Doctor) {
         if (Have 'uv') { Ok "uv available" } else { Warn "uv not available" }
     }
     if ($ConfigureAgents) {
-    if (Test-Path $codexCfg) { Ok "Codex user configuration exists" } else { Warn "Codex user configuration missing" }
+    if (Test-Path -LiteralPath $codexCfg) { Ok "Codex user configuration exists" } else { Warn "Codex user configuration missing" }
     if (Test-Path $ccSettings) { Ok "Claude user settings exist" } else { Warn "Claude user settings missing" }
     }
     Write-Host "  Doctor does not verify VS Code profile names or agent sign-in state; see doctor/README.md." -ForegroundColor DarkGray

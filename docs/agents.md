@@ -37,14 +37,17 @@ commands. Those are human decisions recorded in the charter.
 
 Created only when the file does not already exist; existing files are left alone.
 
-**Codex** (`~/.codex/config.toml`): `approval_policy = "on-request"` asks at permission
+**Codex** (`~/.codex/config.toml`, or `config.toml` in `CODEX_HOME` when that variable is
+set): `approval_policy = "on-request"` asks at permission
 boundaries; routine workspace commands can run without individual approval.
 The defaults also set `sandbox_mode = "workspace-write"`, high reasoning effort, and the
 Context7 documentation server. On Windows it adds `[windows] sandbox = "elevated"`.
 Do not set approvals to `never` on a repository where a command can touch hardware,
 production data or signing keys. For a read-only second-opinion pass, create
-`~/.codex/review.config.toml` with `sandbox_mode = "read-only"` and run
-`codex --profile review`.
+`review.config.toml` beside `config.toml` with `sandbox_mode = "read-only"` and run
+`codex --profile review`. Codex refuses to start when `CODEX_HOME` is set to something
+other than an existing directory; the bootstrap then warns and writes nothing rather
+than creating a possibly mistyped folder.
 
 **Claude Code** (`~/.claude/settings.json`): no global allow rules, and deny rules
 that stop Claude's file tools reading `.env` and `.env.*` files, `.pem`, `.key`,

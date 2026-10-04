@@ -98,11 +98,25 @@ try {
     $profileHarness = @'
 param([string]$Source, [string]$Fixture, [string]$SelectedStack, [switch]$Agents, [switch]$Inspect, [switch]$UseWsl, [switch]$Diagnose)
 $env:USERPROFILE = $Fixture
+# Never let a developer's real CODEX_HOME receive test configuration.
+if ($env:TEST_CODEX_HOME) { $env:CODEX_HOME = $env:TEST_CODEX_HOME } else { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }
 $global:Events = New-Object 'System.Collections.Generic.List[string]'
 function Record([string]$Name, $Arguments) {
     $global:Events.Add($Name + ' ' + ($Arguments -join ' '))
     if ($env:TEST_RUST_PROBE -eq '1' -and $Name -in @('rustup', 'rustc') -and $env:RUSTUP_AUTO_INSTALL -ne '0') {
         [IO.File]::WriteAllText((Join-Path $env:USERPROFILE 'auto-installed'), 'unexpected automatic install')
+    }
+    if ($env:TEST_OLD_RUSTUP -eq '1' -and $Name -in @('rustup', 'rustc')) {
+        # rustup before 1.28 ignores RUSTUP_AUTO_INSTALL and installs a toolchain
+        # pinned by the working directory or any parent.
+        $dir = (Get-Location).ProviderPath
+        while ($dir) {
+            if (Test-Path -LiteralPath (Join-Path $dir 'rust-toolchain.toml')) {
+                [IO.File]::WriteAllText((Join-Path $env:USERPROFILE 'auto-installed'), 'old rustup install')
+                break
+            }
+            $dir = [IO.Path]::GetDirectoryName($dir)
+        }
     }
     $global:LASTEXITCODE = 0
 }
@@ -259,6 +273,23 @@ exit $result
         $env:RUSTUP_AUTO_INSTALL = $previousAutoInstall
         $env:TEST_RUST_PROBE = $null; $env:TEST_BROKEN_RUSTC = $null
     }
+    # rustup before 1.28.1 ignores RUSTUP_AUTO_INSTALL, so probes must also stay
+    # out of a project that pins a toolchain, here from a nested source folder.
+    try {
+        $env:TEST_OLD_RUSTUP = '1'
+        foreach ($mode in @('Inspect', 'Diagnose')) {
+            $fixture = Join-Path $testRoot ('old-rustup-' + [guid]::NewGuid().ToString('N'))
+            $nested = Join-Path $fixture 'src'
+            $null = New-Item -ItemType Directory -Path $nested
+            [IO.File]::WriteAllText((Join-Path $fixture 'rust-toolchain.toml'), "[toolchain]`nchannel = '1.85.0'`n", $utf8)
+            Push-Location $nested
+            try {
+                $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Rust' ("-" + $mode) | Out-String
+                Assert (-not (Test-Path (Join-Path $fixture 'auto-installed'))) "Old rustup never installs a project-pinned toolchain in $mode"
+                Assert ($output -match 'rustc fixture') "Machine Rust toolchain is still probed in $mode"
+            } finally { Pop-Location }
+        }
+    } finally { $env:TEST_OLD_RUSTUP = $null }
 
     $fixture = Join-Path $testRoot 'profile-invalid'
     $null = New-Item -ItemType Directory -Path $fixture
@@ -297,6 +328,24 @@ exit $result
         Assert ([IO.File]::ReadAllText($written[0]) -ceq $existing.Text) 'Existing TOML remains byte-for-byte unchanged regardless of table spelling'
         Assert (($output -match 'Legacy Codex GitHub MCP entry') -eq $existing.Legacy) "Legacy Codex entry warning matches its fixture: $($existing.Text -replace '\n', ' / ')"
     }
+
+    # Codex reads CODEX_HOME when set; the bootstrap writes, warns and diagnoses there.
+    $fixture = Join-Path $testRoot 'profile-codex-home'
+    $customCodex = Join-Path $fixture 'custom codex home'
+    $null = New-Item -ItemType Directory -Path $customCodex
+    try {
+        $env:TEST_CODEX_HOME = $customCodex
+        & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -Agents | Out-Null
+        Assert ((Test-Path -LiteralPath (Join-Path $customCodex 'config.toml')) -and -not (Test-Path (Join-Path $fixture '.codex'))) 'Codex defaults go to CODEX_HOME, not ~/.codex'
+        $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -Agents -Diagnose | Out-String
+        Assert ($output -match 'Codex user configuration exists') 'Doctor reads the configuration in CODEX_HOME'
+        [IO.File]::WriteAllText((Join-Path $customCodex 'config.toml'), "[mcp_servers.github]`nbearer_token_env_var = 'GITHUB_MCP_PAT'", $utf8)
+        $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -Inspect | Out-String
+        Assert ($output -match 'Legacy Codex GitHub MCP entry') 'Legacy Codex entry in CODEX_HOME is reported'
+        $env:TEST_CODEX_HOME = Join-Path $fixture 'missing-codex-home'
+        $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -Agents | Out-String
+        Assert ($output -match 'CODEX_HOME is set to .*not a directory' -and -not (Test-Path -LiteralPath $env:TEST_CODEX_HOME)) 'A missing CODEX_HOME is reported and never created'
+    } finally { $env:TEST_CODEX_HOME = $null }
 
     # -Wsl adds the Remote-WSL extension; check mode never enables WSL.
     $fixture = Join-Path $testRoot 'profile-wsl'
@@ -528,6 +577,7 @@ wslpath() {
     Assert ($LASTEXITCODE -eq 0 -and $output -match 'cargo init --vcs none') 'Rust next step keeps the scaffolded .gitignore'
     $output = '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name PySteps -Parent $np -Environment Windows -Stack Python | Out-String
     Assert ($LASTEXITCODE -eq 0 -and $output -match 'pytest fails when it finds no tests: add a first test before step 5') 'Python next steps require a first test before the gate'
+    Assert ((Get-Content -Raw (Join-Path $np 'PySteps/scripts/check.ps1')).Contains('uv run python -m pytest -q')) 'Python gate runs pytest through python -m so tests can import app modules'
 
     '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name Plain -Parent $np -WindowsNative no -LinuxTarget no -NoClaude | Out-Null
     Assert ($LASTEXITCODE -eq 0 -and -not (Test-Path (Join-Path $np 'Plain/CLAUDE.md'))) 'No platform tie stays on Windows and -NoClaude is honoured'

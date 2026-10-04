@@ -177,7 +177,9 @@ case "$STACK" in
   python)
     FORMAT='uv run ruff format --check .'
     LINT='uv run ruff check .'
-    TEST='uv run pytest -q'
+    # python -m puts the project folder on the import path, so a first test can
+    # import an app module such as main.py; plain pytest cannot.
+    TEST='uv run python -m pytest -q'
     IGNORE_EXTRA=$'\n# Python environments and caches\n.venv/\n__pycache__/\n.pytest_cache/\n.ruff_cache/\n.mypy_cache/' ;;
   *) FORMAT='' LINT='' TEST='' IGNORE_EXTRA='' ;;
 esac

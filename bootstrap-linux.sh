@@ -106,12 +106,23 @@ add_path_dir() {
   case ":$PATH:" in *":$1:"*) ;; *) if [ -d "$1" ]; then PATH="$1:$PATH"; fi ;; esac
 }
 
-# Scope the setting to each probe so check/doctor cannot auto-install a missing
-# project-selected toolchain, and the caller's environment remains unchanged.
+# Check and doctor describe the machine, so each probe runs in a subshell from
+# the filesystem root with automatic installation disabled. A project's
+# rust-toolchain.toml or directory override can then neither select nor install
+# a toolchain, even on rustup before 1.28.1, which ignores RUSTUP_AUTO_INSTALL.
+# The caller's environment and working directory remain unchanged.
 rust_probe() (
-  if [ "$CHECK_ONLY" = 1 ]; then export RUSTUP_AUTO_INSTALL=0; fi
+  if [ "$CHECK_ONLY" = 1 ]; then
+    export RUSTUP_AUTO_INSTALL=0
+    cd / || exit 1
+  fi
   "$@"
 )
+
+# Codex reads its configuration from $CODEX_HOME when that is set and non-empty,
+# and then refuses to start unless it is an existing directory.
+CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
+CODEX_CONFIG="$CODEX_DIR/config.toml"
 
 # Download an installer to a private temporary file and run it only if the
 # download completed. A partial script is never executed.
@@ -423,9 +434,12 @@ have claude && ok "claude $(claude --version 2>/dev/null | head -1)" \
 have codex  && ok "codex $(codex --version 2>/dev/null | head -1)" \
   || warn "codex CLI not found. Install it (see START-HERE.md), then run 'codex' once to sign in."
 
-# Codex defaults. Written only if the file is absent.
-if [ "$CHECK_ONLY" = 0 ] && [ ! -f "$HOME/.codex/config.toml" ]; then
-  if mkdir -p "$HOME/.codex" && cat > "$HOME/.codex/config.toml" <<'TOML'
+# Codex defaults. Written only if the file is absent. A CODEX_HOME that is not a
+# directory is reported, not created: a mistyped value must not become a folder.
+if [ -n "${CODEX_HOME:-}" ] && [ ! -d "$CODEX_DIR" ]; then
+  warn "CODEX_HOME is set to $CODEX_DIR, which is not a directory; Codex will not start until it exists. Configuration not written."
+elif [ "$CHECK_ONLY" = 0 ] && [ ! -f "$CODEX_CONFIG" ]; then
+  if mkdir -p "$CODEX_DIR" && cat > "$CODEX_CONFIG" <<'TOML'
 # Codex owns whole tasks here, same as Claude Code, so it can write.
 # Routine workspace commands can run without approval; on-request asks at
 # permission boundaries. This is not per-command approval or a read-only sandbox.
@@ -439,10 +453,10 @@ sandbox_mode = "workspace-write"
 [mcp_servers.context7]
 url = "https://mcp.context7.com/mcp"
 TOML
-  then ok "wrote ~/.codex/config.toml"
-  else bad "could not write ~/.codex/config.toml"; fi
-elif [ -f "$HOME/.codex/config.toml" ]; then
-  skip "$HOME/.codex/config.toml already exists, left alone"
+  then ok "wrote $CODEX_CONFIG"
+  else bad "could not write $CODEX_CONFIG"; fi
+elif [ -f "$CODEX_CONFIG" ]; then
+  skip "$CODEX_CONFIG already exists, left alone"
 fi
 fi # Optional agent defaults
 
@@ -535,8 +549,8 @@ done
 # Report, never edit: the retired launcher's Codex entry forwarded GITHUB_MCP_PAT.
 # Lines with a '#' before the key are comments and do not count.
 if grep -Eq "^[^#]*bearer_token_env_var[[:space:]]*=[[:space:]]*[\"']GITHUB_MCP_PAT[\"']" \
-  "$HOME/.codex/config.toml" 2>/dev/null; then
-  warn "Legacy Codex GitHub MCP entry (bearer_token_env_var = \"GITHUB_MCP_PAT\") detected in ~/.codex/config.toml."
+  "$CODEX_CONFIG" 2>/dev/null; then
+  warn "Legacy Codex GitHub MCP entry (bearer_token_env_var = \"GITHUB_MCP_PAT\") detected in $CODEX_CONFIG."
   warn "  remove that server's table; see 'Migrate from the retired GitHub MCP launcher' in docs/agents.md"
 fi
 
@@ -639,7 +653,7 @@ if [ "$DOCTOR" = 1 ]; then
     if have uv; then ok "uv available"; else warn "uv not available"; fi
   fi
   if [ "$CONFIGURE_AGENTS" = 1 ]; then
-    [ -f "$HOME/.codex/config.toml" ] && ok "Codex user configuration exists" || warn "Codex user configuration missing"
+    [ -f "$CODEX_CONFIG" ] && ok "Codex user configuration exists" || warn "Codex user configuration missing"
     [ -f "$HOME/.claude/settings.json" ] && ok "Claude user settings exist" || warn "Claude user settings missing"
   fi
   if have gh && gh_authenticated; then ok "GitHub CLI authentication works"; else warn "GitHub CLI authentication is unavailable"; fi
