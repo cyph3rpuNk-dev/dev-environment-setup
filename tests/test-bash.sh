@@ -7,6 +7,8 @@ export TMPDIR="$TEST_ROOT"
 trap 'rm -rf -- "$TEST_ROOT"' EXIT
 pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+# Never let a developer's real Codex configuration be read or written.
+unset CODEX_HOME
 mkdir -p "$TEST_ROOT/bin" "$TEST_ROOT/profile"
 # shellcheck source=helpers/install-browser-bridge.sh
 . "$ROOT/helpers/install-browser-bridge.sh"
@@ -149,6 +151,19 @@ if [ "${TEST_RUST_PROBE:-0}" = 1 ]; then
     gh) [ "${RUSTUP_AUTO_INSTALL-unset}" = "$TEST_ORIGINAL_AUTO_INSTALL" ] || exit 91 ;;
   esac
 fi
+if [ "${TEST_OLD_RUSTUP:-0}" = 1 ]; then
+  case "$name" in
+    rustup|rustc)
+      # rustup before 1.28 ignores RUSTUP_AUTO_INSTALL and installs a toolchain
+      # pinned by the working directory or any parent.
+      dir=$PWD
+      while :; do
+        if [ -f "$dir/rust-toolchain.toml" ]; then touch "$TEST_EVENTS.auto-installed"; break; fi
+        [ "$dir" != / ] || break
+        dir=$(dirname "$dir")
+      done ;;
+  esac
+fi
 missing() { case " ${TEST_MISSING_PKGS:-} " in *" $1 "*) return 0;; esac; return 1; }
 case "$name" in
   sudo)
@@ -236,6 +251,7 @@ run_bootstrap() {
     DEVSETUP_OS_RELEASE="$TEST_ROOT/os/$os" DEVSETUP_PROC_VERSION="$TEST_ROOT/os/$kernel" \
     DEVSETUP_KERNEL="${TEST_KERNEL:-Linux}" DEVSETUP_BREW_CANDIDATES="${TEST_BREW_CANDIDATES:-$TEST_ROOT/no-such-brew}" \
     DEVSETUP_WSL_CONF="${TEST_WSL_CONF:-$TEST_ROOT/no-wsl.conf}" DEVSETUP_WSL_POWERSHELL="$TEST_ROOT/no-powershell.exe" \
+    CODEX_HOME="${TEST_CODEX_HOME:-}" \
     bash "$ROOT/bootstrap-linux.sh" "$@"
 }
 
@@ -319,6 +335,17 @@ for initial in unset 0 1; do
     [ ! -e "$TEST_EVENTS.auto-installed" ] || fail 'read-only Rust probe enabled automatic installation'
     grep -q 'GitHub CLI is authenticated' "$TEST_ROOT/rust-probe.log" || fail 'Rust probe changed environment for later commands'
   done
+done
+mkdir -p "$TEST_ROOT/pinned-project/src"
+for mode in --check --doctor; do
+  rm -f "$TEST_EVENTS.auto-installed"
+  (
+    export TEST_OLD_RUSTUP=1
+    cd "$TEST_ROOT/pinned-project/src"
+    run_bootstrap fedora native "$mode" --stack=rust || :
+  ) > "$TEST_ROOT/old-rustup.log"
+  [ ! -e "$TEST_EVENTS.auto-installed" ] || fail "old rustup installed a project-pinned toolchain in $mode"
+  grep -q 'rustc 1.85.0' "$TEST_ROOT/old-rustup.log" || fail "machine Rust toolchain not probed in $mode"
 done
 pass 'Rust checks suppress automatic toolchain installation and preserve caller settings'
 
@@ -510,11 +537,25 @@ for case in \
   [ "$found" = "${case%%|*}" ] || fail "legacy Codex entry check expected ${case%%|*}, got $found: ${case#*|}"
 done
 cp "$TEST_ROOT/codex-config.saved" "$codex_config"
+# Codex reads CODEX_HOME when set; the bootstrap writes, warns and diagnoses there.
+custom_codex="$TEST_ROOT/custom codex home"
+mkdir -p "$custom_codex"
+TEST_CODEX_HOME="$custom_codex" run_bootstrap ubuntu native --configure-agents > "$TEST_ROOT/codex-home.log"
+[ -f "$custom_codex/config.toml" ] && grep -q 'approval_policy' "$custom_codex/config.toml" || fail 'Codex defaults not written to CODEX_HOME'
+cmp -s "$TEST_ROOT/codex-config.saved" "$codex_config" || fail 'CODEX_HOME run changed ~/.codex/config.toml'
+TEST_CODEX_HOME="$custom_codex" run_bootstrap ubuntu native --doctor --configure-agents > "$TEST_ROOT/codex-home.log" || true
+grep -q 'Codex user configuration exists' "$TEST_ROOT/codex-home.log" || fail 'doctor did not read CODEX_HOME'
+printf '[mcp_servers.github]\nbearer_token_env_var = "GITHUB_MCP_PAT"\n' > "$custom_codex/config.toml"
+TEST_CODEX_HOME="$custom_codex" run_bootstrap ubuntu native --check > "$TEST_ROOT/codex-home.log" || true
+grep -q 'Legacy Codex GitHub MCP entry' "$TEST_ROOT/codex-home.log" || fail 'legacy entry in CODEX_HOME not reported'
+TEST_CODEX_HOME="$TEST_ROOT/no-such-codex-home" run_bootstrap ubuntu native --configure-agents > "$TEST_ROOT/codex-home.log"
+grep -q 'CODEX_HOME is set to .*not a directory' "$TEST_ROOT/codex-home.log" || fail 'missing CODEX_HOME not reported'
+[ ! -e "$TEST_ROOT/no-such-codex-home" ] || fail 'bootstrap created a missing CODEX_HOME'
 : > "$TEST_EVENTS"
 TEST_MCP_LOOKALIKE=1 run_bootstrap ubuntu native --configure-agents > "$TEST_ROOT/mcp.log"
 grep -q '^claude mcp get github$' "$TEST_EVENTS" && grep -q 'github is optional' "$TEST_ROOT/mcp.log" || fail 'lookalike MCP mistaken for github'
 grep -q '^claude mcp add .* context7 ' "$TEST_EVENTS" || fail 'lookalike prevented context7 installation'
-pass 'Auth scopes, legacy profile and Codex warnings, and exact MCP names avoid false positives'
+pass 'Auth scopes, legacy profile and Codex warnings, CODEX_HOME, and exact MCP names avoid false positives'
 
 for tool in rustup uv; do
   mv "$TEST_ROOT/mock-bin/$tool" "$TEST_ROOT/$tool.saved"
@@ -794,6 +835,8 @@ pass 'Scaffolder accepts environment and stack in any case'
 new_project --name pysteps --parent "$NP" --environment linux --stack python > "$TEST_ROOT/np-python.log"
 grep -q 'pytest fails when it finds no tests: add a first test before step 5' "$TEST_ROOT/np-python.log" \
   || fail 'Python next steps omit the first-test requirement'
+# python -m pytest puts the project on the import path so a first test can import main.py.
+grep -Fq 'uv run python -m pytest -q' "$NP/pysteps/scripts/check.sh" || fail 'Python gate does not run pytest through python -m'
 pass 'Python next steps require a first test before the gate'
 # The Rust next step keeps the scaffolder's single /target/ entry: plain cargo init
 # would append another. Cargo runs only where installed; it needs no network here.

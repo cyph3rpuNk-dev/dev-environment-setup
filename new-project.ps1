@@ -142,9 +142,11 @@ switch ($Stack) {
         $ignoreExtra = "`n# Rust build output`n/target/`n"
     }
     'Python' {
+        # python -m puts the project folder on the import path, so a first test can
+        # import an app module such as main.py; plain pytest cannot.
         $commands = @{ FORMAT_COMMAND = 'uv run ruff format --check .'
                        LINT_COMMAND = 'uv run ruff check .'
-                       TEST_COMMAND = 'uv run pytest -q' }
+                       TEST_COMMAND = 'uv run python -m pytest -q' }
         $ignoreExtra = "`n# Python environments and caches`n.venv/`n__pycache__/`n.pytest_cache/`n.ruff_cache/`n.mypy_cache/`n"
     }
 }

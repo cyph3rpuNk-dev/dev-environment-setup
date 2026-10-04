@@ -26,11 +26,13 @@ uv init --app .                 # or --lib for a library; review what it generat
 uv add --dev ruff pytest
 uv run ruff format --check .
 uv run ruff check .
-uv run pytest -q
+uv run python -m pytest -q
 ```
 
 `new-project.sh --stack python` (or `new-project.ps1 -Stack Python`) pre-fills the gate
-with the last three commands. pytest exits with status 5 when it collects no tests, so
+with the last three commands. Running pytest through `python -m` puts the project
+folder on the import path, so a test can import an app module such as `main.py`; with
+plain `pytest`, that import fails in the `--app` layout. pytest exits with status 5 when it collects no tests, so
 add a first test before running the gate, or delete the gate's test line until then and
 record that under "Open decisions" in the charter. Pin the Python version deliberately in
 `.python-version` and `pyproject.toml` rather than accepting the generator's default;

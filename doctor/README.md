@@ -47,10 +47,14 @@ proof that every optional feature is ready.
 
 Selecting Python makes uv required; selecting Rust requires a working compiler
 version probe, including a compiler executable on PATH. Rust check/doctor probes
-disable rustup automatic installation for the duration of each command, then restore
-the caller setting. A missing project-pinned toolchain is reported as unavailable;
-install it deliberately outside check/doctor mode. An executable on PATH that fails
-its version command is a failure.
+describe the machine, not the folder you run them from: each runs from the
+filesystem root with rustup automatic installation disabled, then restores the
+caller's setting. A project's `rust-toolchain.toml` or directory override therefore
+neither selects nor installs a toolchain, including on rustup before 1.28.1, which
+ignores `RUSTUP_AUTO_INSTALL`. A `RUSTUP_TOOLCHAIN` environment variable still
+applies. Install a project's pinned toolchain deliberately, from inside the project,
+with `rustup toolchain install`. An executable on PATH that fails its version command
+is a failure.
 The Linux base setup also requires awk for project templates and installs gawk on
 supported Linux distributions when no awk command is available.
 
