@@ -212,13 +212,26 @@ if (Have 'rustup') {
 }
 else { Skip "rustup unavailable (reported in Base tools); component setup skipped" }
 
+$rustUsable = $false
 if (Have 'rustc') {
     $rustProbe = Invoke-RustProbe -Command rustc -Arguments @('--version')
-    if ($rustProbe.ExitCode -eq 0) { Ok $rustProbe.Output.Trim() }
+    if ($rustProbe.ExitCode -eq 0) { Ok $rustProbe.Output.Trim(); $rustUsable = $true }
     else { Bad "rustc --version failed; the selected Rust toolchain is not usable" }
 }
 elseif (Have 'rustup') { Bad "rustc is missing; repair the selected Rust toolchain" }
 else { Skip "rustc unavailable until rustup is installed (reported above)" }
+
+# A broken compiler is already reported; check required components only after it works.
+if ($Check -and $rustUsable -and (Have 'rustup')) {
+    $componentProbe = Invoke-RustProbe -Command rustup -Arguments @('component', 'list', '--installed')
+    if ($componentProbe.ExitCode -ne 0) { Bad "could not query installed Rust components" }
+    else {
+        foreach ($component in @('rustfmt', 'clippy')) {
+            if ($componentProbe.Output -match ("(?m)^" + $component + "(-|\s|$)")) { Ok "$component installed" }
+            else { Bad "$component missing; run: rustup component add $component" }
+        }
+    }
+}
 
 # The single most common Windows Rust failure is a missing MSVC linker, and it
 # only shows up at link time. So actually link something.
@@ -587,12 +600,6 @@ if ($Doctor) {
         }
     }
     else { Warn "WSL is unavailable" }
-    if ($wantRust -and (Have 'rustup')) {
-        $componentProbe = Invoke-RustProbe -Command rustup -Arguments @('component', 'list', '--installed')
-        $components = $componentProbe.Output
-        if ($componentProbe.ExitCode -eq 0 -and $components -match 'rustfmt' -and $components -match 'clippy') { Ok "rustfmt and clippy installed" }
-        else { Warn "rustfmt or clippy missing" }
-    }
     if ($wantPython) {
         if (Have 'uv') { Ok "uv available" } else { Warn "uv not available" }
     }

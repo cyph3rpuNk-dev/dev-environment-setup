@@ -89,6 +89,37 @@ try {
     $output = & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" | Out-String
     Assert ($LASTEXITCODE -eq 1 -and $output -match 'no steps') 'PowerShell gate with every step deleted refuses to report success'
 
+    # Exercise the toolkit's actual Step function independently of slow gate steps.
+    $toolkitAst = Parse "$root/scripts/check.ps1"
+    $toolkitStep = $toolkitAst.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Step'
+    }, $true).Extent.Text
+    $toolkitFixture = @'
+$ErrorActionPreference = 'Stop'
+$failures = 0
+__STEP__
+Step 'progress' { & $env:TEST_POWERSHELL -NoProfile -Command "[Console]::Error.WriteLine('progress on stderr'); exit 0" }
+Write-Output "Progress failures: $failures"
+Step 'native failure' { & $env:TEST_POWERSHELL -NoProfile -Command "[Console]::Error.WriteLine('native failure'); exit 9" }
+Step 'PowerShell error' { Write-Error 'cmdlet failure' }
+Step 'terminating error' { throw 'terminating failure' }
+Step 'missing command' { & missing-toolkit-command-747 }
+Step 'continued' { Write-Output 'continued after failures' }
+exit $failures
+'@
+    $toolkitPath = "$testRoot/toolkit-step.ps1"
+    [IO.File]::WriteAllText($toolkitPath, $toolkitFixture.Replace('__STEP__', $toolkitStep), $utf8)
+    $output = & $shellExe -NoProfile -File $toolkitPath | Out-String
+    Assert ($LASTEXITCODE -eq 4 -and $output -match 'Progress failures: 0' -and $output -match 'continued after failures') 'Toolkit Step accepts stderr and counts all four real failures in a fresh process'
+    $output = & $toolkitPath *>&1 | Out-String
+    Assert ($LASTEXITCODE -eq 4 -and $output -match 'Progress failures: 0' -and $output -match 'progress on stderr' -and $output -match 'continued after failures') 'Toolkit Step preserves exit status and continuation with redirected streams'
+    $hosted = [powershell]::Create()
+    try {
+        $null = $hosted.AddScript("`$output = & '$toolkitPath' *>&1 | Out-String; [pscustomobject]@{ ExitCode = `$LASTEXITCODE; Output = `$output }")
+        $result = @($hosted.Invoke())[-1]
+        Assert ($result.ExitCode -eq 4 -and $result.Output -match 'Progress failures: 0' -and $result.Output -match 'continued after failures') 'Toolkit Step preserves error handling in a hosted runspace'
+    } finally { $hosted.Dispose() }
+
     # A clean checkout has no ordinary `git diff`, so exercise the real toolkit
     # gate in a committed fixture containing trailing whitespace.
     $whitespaceRoot = Join-Path $testRoot 'committed-whitespace'
@@ -174,7 +205,15 @@ function git {
 }
 function gh { Record 'gh' $args }
 function pwsh { Record 'pwsh' $args }
-function rustup { Record 'rustup' $args; 'stable-x86_64-pc-windows-msvc rustfmt clippy' }
+function rustup {
+    Record 'rustup' $args
+    if (($args -join ' ') -eq 'component list --installed') {
+        if ($env:TEST_COMPONENT_QUERY_FAIL -eq '1') { $global:LASTEXITCODE = 44; return }
+        foreach ($component in @('rustfmt', 'clippy')) {
+            if (($env:TEST_MISSING_COMPONENTS -split ' ') -notcontains $component) { "$component-x86_64-pc-windows-msvc" }
+        }
+    } else { 'stable-x86_64-pc-windows-msvc' }
+}
 function rustc { Record 'rustc' $args; if ($env:TEST_BROKEN_RUSTC -eq '1') { $global:LASTEXITCODE = 42; return }; "rustc fixture`nhost: x86_64-pc-windows-msvc" }
 function cargo { Record 'cargo' $args }
 function cargo-binstall { Record 'cargo-binstall' $args }
@@ -278,6 +317,35 @@ exit $result
                 Assert ($LASTEXITCODE -ne 0 -and $output -match $case.Message) "Windows $mode fails for $($case.Flag)"
             }
         } finally { [Environment]::SetEnvironmentVariable($case.Flag, $savedFlag, 'Process') }
+    }
+
+    foreach ($mode in @('Inspect', 'Diagnose')) {
+        foreach ($missing in @('rustfmt', 'clippy', 'rustfmt clippy', 'query', 'broken-toolchain')) {
+            $fixture = Join-Path $testRoot ([guid]::NewGuid().ToString('N'))
+            $null = New-Item -ItemType Directory -Path $fixture
+            try {
+                $env:TEST_MISSING_COMPONENTS = $missing
+                $env:TEST_COMPONENT_QUERY_FAIL = if ($missing -in @('query', 'broken-toolchain')) { '1' } else { $null }
+                $env:TEST_BROKEN_RUSTC = if ($missing -eq 'broken-toolchain') { '1' } else { $null }
+                $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Rust' ("-" + $mode) | Out-String
+                $expected = if ($missing -eq 'rustfmt clippy') { 2 } else { 1 }
+                # The real doctor also rejects running the Windows bootstrap on another OS.
+                if ($mode -eq 'Diagnose' -and $env:OS -ne 'Windows_NT') { $expected++ }
+                Assert ($LASTEXITCODE -eq $expected) "Windows $mode counts $missing exactly once per cause"
+                if ($missing -eq 'query') { Assert ($output -match 'could not query installed Rust components') 'Component query error is reported' }
+                elseif ($missing -ne 'broken-toolchain') {
+                    foreach ($component in ($missing -split ' ')) {
+                        Assert ($output -match ("FAIL.*" + $component + " missing")) "Missing $component is named"
+                    }
+                }
+                $events = Get-Content -Raw (Join-Path $fixture 'events.txt')
+                Assert ($events -notmatch 'rustup component add|cargo (init|build|install)|winget install') 'Component readiness never provisions'
+            } finally {
+                $env:TEST_MISSING_COMPONENTS = $null
+                $env:TEST_COMPONENT_QUERY_FAIL = $null
+                $env:TEST_BROKEN_RUSTC = $null
+            }
+        }
     }
 
     # Model rustup proxies with an absent project-pinned toolchain. Every probe

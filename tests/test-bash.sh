@@ -194,7 +194,10 @@ case "$name" in
         if [ "$package" = gawk ]; then cp "$TEST_AWK_SOURCE" "${TEST_EVENTS%/*}/utilities/awk"; fi
       done
     fi ;;
-  rpm) if missing "$2"; then exit 1; fi ;;
+  rpm)
+    if [ "$2" = --whatprovides ]; then
+      [ "$3" = pkg-config ] && [ "${TEST_PKG_CONFIG_PROVIDER:-0}" = 1 ] || exit 1
+    elif missing "$2"; then exit 1; fi ;;
   dpkg-query) for last; do :; done; if missing "$last"; then exit 1; fi; printf 'install ok installed' ;;
   brew)
     case "$1" in
@@ -206,7 +209,13 @@ case "$name" in
     esac ;;
   sw_vers) printf '15.0\n' ;;
   xcode-select) [ "${TEST_NO_CLT:-0}" = 1 ] && exit 2; printf '/Library/Developer/CommandLineTools\n' ;;
-  rustup) printf 'rustfmt clippy\n' ;;
+  rustup)
+    if [ "$*" = 'component list --installed' ]; then
+      [ "${TEST_COMPONENT_QUERY_FAIL:-0}" != 1 ] || exit 44
+      for component in rustfmt clippy; do
+        case " ${TEST_MISSING_COMPONENTS:-} " in *" $component "*) ;; *) printf '%s-x86_64-unknown-linux-gnu\n' "$component" ;; esac
+      done
+    else printf 'rustup fixture\n'; fi ;;
   rustc) [ "${TEST_BROKEN_RUSTC:-0}" != 1 ] || exit 42; printf 'rustc 1.85.0\n' ;;
   uv) [ "${TEST_BROKEN_UV:-0}" != 1 ] || exit 43; printf 'uv 0.9.0\n' ;;
   code)
@@ -330,6 +339,27 @@ for mode in --check --doctor; do
   [ "$result" -ne 0 ] && grep -q 'uv --version failed' "$TEST_ROOT/broken-uv.log" || fail 'broken uv passed readiness'
 done
 pass 'Selected runtimes must exist and pass version probes in check and doctor modes'
+for mode in --check --doctor; do
+  for missing in rustfmt clippy 'rustfmt clippy'; do
+    : > "$TEST_EVENTS"
+    result=0
+    TEST_MISSING_COMPONENTS="$missing" run_bootstrap fedora native "$mode" --stack=rust > "$TEST_ROOT/components.log" 2>&1 || result=$?
+    expected=1; [ "$missing" != 'rustfmt clippy' ] || expected=2
+    [ "$result" -eq "$expected" ] || fail 'missing components were not counted exactly once'
+    for component in $missing; do
+      grep -q "FAIL.*$component missing" "$TEST_ROOT/components.log" || fail 'missing component not named'
+    done
+    if grep -Eq 'rustup component add|^(sudo|dnf|cargo) ' "$TEST_EVENTS"; then fail 'component check provisioned tools'; fi
+  done
+  result=0
+  TEST_COMPONENT_QUERY_FAIL=1 run_bootstrap fedora native "$mode" --stack=rust > "$TEST_ROOT/component-query.log" 2>&1 || result=$?
+  [ "$result" -eq 1 ] && grep -q 'could not query installed Rust components' "$TEST_ROOT/component-query.log" || fail 'component query failure was not reported once'
+  result=0
+  TEST_BROKEN_RUSTC=1 TEST_COMPONENT_QUERY_FAIL=1 run_bootstrap fedora native "$mode" --stack=rust > "$TEST_ROOT/component-toolchain.log" 2>&1 || result=$?
+  [ "$result" -eq 1 ] || fail 'broken toolchain counted component consequences'
+done
+pass 'Rust readiness requires rustfmt and clippy without provisioning or duplicate failures'
+
 mkdir -p "$TEST_ROOT/pinned-project"
 printf '[toolchain]\nchannel = "1.85.0"\n' > "$TEST_ROOT/pinned-project/rust-toolchain.toml"
 for initial in unset 0 1; do
@@ -480,6 +510,18 @@ if grep -q 'WSL kernel' "$TEST_ROOT/native.log"; then fail 'native Linux reporte
 grep -q '^dpkg-query' "$TEST_EVENTS" || fail 'apt systems not checked with dpkg-query'
 if grep -q '^rpm ' "$TEST_EVENTS"; then fail 'apt system queried rpm'; fi
 pass 'Native Linux is detected and never offered the WSL bridge'
+
+# Fedora installs pkgconf-pkg-config as the provider of the pkg-config capability.
+: > "$TEST_EVENTS"
+TEST_MISSING_PKGS=pkg-config TEST_PKG_CONFIG_PROVIDER=1 run_bootstrap fedora native --stack=rust --check > "$TEST_ROOT/rpm-provider.log"
+grep -q '^rpm -q --whatprovides pkg-config$' "$TEST_EVENTS" || fail 'RPM provider was not checked'
+if grep -Eq '^(sudo|dnf) ' "$TEST_EVENTS"; then fail 'provider check attempted provisioning'; fi
+pass 'Fedora check accepts an installed pkg-config provider'
+result=0
+TEST_MISSING_PKGS=pkg-config run_bootstrap fedora native --stack=rust --check > "$TEST_ROOT/rpm-no-provider.log" 2>&1 || result=$?
+[ "$result" -ne 0 ] || fail 'missing RPM capability incorrectly passed check'
+grep -q 'pkg-config' "$TEST_ROOT/rpm-no-provider.log" || fail 'missing RPM capability was not reported'
+pass 'Fedora check rejects a package with no installed provider'
 
 # Missing packages are installed with the distribution's own package manager.
 : > "$TEST_EVENTS"

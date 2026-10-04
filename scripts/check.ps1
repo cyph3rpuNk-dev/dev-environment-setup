@@ -4,14 +4,28 @@ param()
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $failures = 0
+# Native programs report failure through their exit code, and many (cargo, uv) write
+# normal progress to stderr. Windows PowerShell 5.1 turns redirected stderr into error
+# records, which would fail a successful step, so each step collects them: native
+# stderr is printed, while any other PowerShell error still fails the step.
 function Step([string]$Name, [scriptblock]$Action) {
     Write-Host "`n== $Name =="
     $global:LASTEXITCODE = 0
+    $ErrorActionPreference = 'Continue'
+    $problems = New-Object System.Collections.Generic.List[string]
     try {
-        & $Action
-        if ($LASTEXITCODE -ne 0) { throw "Command exited with $LASTEXITCODE" }
+        & $Action 2>&1 | ForEach-Object {
+            if ($_ -isnot [Management.Automation.ErrorRecord]) { $_ }
+            elseif ($_.FullyQualifiedErrorId -like 'NativeCommandError*') { Write-Host $_.ToString() }
+            else { $problems.Add($_.ToString()) }
+        }
+        if ($LASTEXITCODE -ne 0) { $problems.Add("Native command exited with $LASTEXITCODE") }
     }
-    catch { $script:failures++; Write-Host "FAIL: $_" }
+    catch { $problems.Add($_.ToString()) }
+    if ($problems.Count -gt 0) {
+        $script:failures++
+        Write-Host "FAIL: $($problems[0])"
+    }
 }
 Push-Location -LiteralPath $root
 try {

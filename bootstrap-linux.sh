@@ -195,7 +195,8 @@ fi
 
 pkg_installed() {
   case "$PKG_MGR" in
-    dnf) rpm -q "$1" >/dev/null 2>&1 ;;
+    # DNF accepts capabilities too (Fedora's pkgconf-pkg-config provides pkg-config).
+    dnf) rpm -q "$1" >/dev/null 2>&1 || rpm -q --whatprovides "$1" >/dev/null 2>&1 ;;
     apt) dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed' ;;
     brew) brew list --formula "$1" >/dev/null 2>&1 ;;
     *) case "$1" in build-essential) have gcc ;; pkgconf) have pkg-config ;; gawk) have awk ;; *) have "$1" ;; esac ;;
@@ -301,13 +302,30 @@ if have rustup && [ "$CHECK_ONLY" = 0 ]; then
   rustup component add rustfmt clippy && ok "rustfmt + clippy" \
     || bad "could not add rustfmt/clippy"
 fi
+RUST_USABLE=0
 if have rustc; then
-  if RUST_VERSION=$(rust_probe rustc --version); then ok "$RUST_VERSION"
+  if RUST_VERSION=$(rust_probe rustc --version); then ok "$RUST_VERSION"; RUST_USABLE=1
   else bad "rustc --version failed; the selected Rust toolchain is not usable"; fi
 elif [ "$RUSTUP_FAILED" = 1 ]; then
   skip "rustc unavailable until rustup is installed (reported above)"
 else
   bad "rustc not on PATH (open a new terminal and rerun)"
+fi
+
+# Check the components required by the generated gate without provisioning.
+# A broken compiler is already one failure; avoid counting its consequences again.
+if [ "$CHECK_ONLY" = 1 ] && [ "$RUST_USABLE" = 1 ] && have rustup; then
+  if COMPONENTS=$(rust_probe rustup component list --installed 2>/dev/null); then
+    for component in rustfmt clippy; do
+      if printf '%s\n' "$COMPONENTS" | grep -Eq "^$component(-|[[:space:]]|$)"; then
+        ok "$component installed"
+      else
+        bad "$component missing; run: rustup component add $component"
+      fi
+    done
+  else
+    bad "could not query installed Rust components"
+  fi
 fi
 
 # Toolchain version requirements belong to each project.
@@ -639,10 +657,6 @@ if [ "$DOCTOR" = 1 ]; then
     else warn "Xcode Command Line Tools missing; run: xcode-select --install"; fi
   else
     ok "native Linux kernel"
-  fi
-  if [ "$WANT_RUST" = 1 ] && have rustup; then
-    COMPONENTS=$(rust_probe rustup component list --installed 2>/dev/null || true)
-    case "$COMPONENTS" in *rustfmt*clippy*|*clippy*rustfmt*) ok "rustfmt and clippy installed";; *) warn "rustfmt or clippy missing";; esac
   fi
   if [ "$WANT_RUST" = 1 ]; then
     if [ "$EXTENSIONS_CHECKED" = 0 ]; then skip "rust-analyzer not checked; editor extension listing was unavailable or skipped"
