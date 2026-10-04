@@ -155,6 +155,7 @@ if [ -e "$TARGET" ] && { [ ! -d "$TARGET" ] || [ -n "$(ls -A -- "$TARGET")" ]; }
   die "$TARGET already exists and is not an empty directory; nothing was changed"
 fi
 command -v git >/dev/null 2>&1 || die "git is required; run bootstrap-linux.sh first"
+command -v awk >/dev/null 2>&1 || die "awk is required; run bootstrap-linux.sh first"
 for f in PROJECT-CHARTER.md.template AGENTS.md.template CLAUDE.md.template check.sh.template \
          README.md.template gitattributes.template gitignore.template editorconfig.template; do
   [ -f "$TEMPLATES/$f" ] || die "toolkit template missing: $TEMPLATES/$f"

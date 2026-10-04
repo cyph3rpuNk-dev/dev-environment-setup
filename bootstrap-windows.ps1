@@ -63,7 +63,6 @@ function Have ($c) { [bool](Get-Command $c -ErrorAction SilentlyContinue) }
 # PowerShell 5.1 writes one for -Encoding UTF8. Write configuration without it.
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 function Write-ConfigFile ([string]$Path, [string]$Text) { [IO.File]::WriteAllText($Path, $Text, $script:Utf8NoBom) }
-function Add-ConfigText ([string]$Path, [string]$Text) { [IO.File]::AppendAllText($Path, $Text, $script:Utf8NoBom) }
 
 function Test-Administrator {
     if ($env:OS -ne 'Windows_NT') { return $false }
@@ -155,6 +154,12 @@ foreach ($t in $base) {
 }
 
 # ---------------------------------------------------------------------------
+if ($wantPython -and (Have 'uv')) {
+    $uvVersion = (uv --version 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -eq 0) { Ok $uvVersion }
+    else { Bad "uv --version failed; the selected Python stack is not usable" }
+}
+
 if ($wantRust) {
 Say "2. Rust toolchain and the MSVC linker"
 
@@ -172,7 +177,11 @@ if (Have 'rustup') {
 }
 else { Skip "rustup unavailable (reported in Base tools); component setup skipped" }
 
-if (Have 'rustc') { Ok (rustc --version) }
+if (Have 'rustc') {
+    $rustVersion = (rustc --version 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -eq 0) { Ok $rustVersion }
+    else { Bad "rustc --version failed; the selected Rust toolchain is not usable" }
+}
 
 # The single most common Windows Rust failure is a missing MSVC linker, and it
 # only shows up at link time. So actually link something.
@@ -350,7 +359,6 @@ if (Have 'codex')  { Ok "codex found" }  else { Warn "codex CLI not found. Insta
 
 $codexDir = Join-Path $env:USERPROFILE '.codex'
 $codexCfg = Join-Path $codexDir 'config.toml'
-$codexCreated = $false
 if (-not $Check -and -not (Test-Path $codexCfg)) {
     try {
         New-Item -ItemType Directory -Force -Path $codexDir -ErrorAction Stop | Out-Null
@@ -372,7 +380,6 @@ url = "https://mcp.context7.com/mcp"
 sandbox = "elevated"
 '@
         Ok "wrote $codexCfg"
-        $codexCreated = $true
     }
     catch { Bad "could not write ${codexCfg}: $_" }
 }
@@ -384,11 +391,7 @@ elseif (Test-Path $codexCfg) {
 # ---------------------------------------------------------------------------
 Say "7. GitHub credentials"
 # Do not persist a PAT in the Windows environment or a shell profile. The script
-# checks GitHub CLI authentication but never reads the token. The optional Codex
-# helper obtains it only for the Codex child process. Claude's PAT-backed GitHub MCP
-# configuration is an explicit manual choice because it stores an authorization
-# header in Claude's user-scoped MCP configuration.
-$githubAuthenticated = $false
+# checks GitHub CLI authentication but never reads or forwards the token.
 if ($githubAuthLoadError) {
     Bad "GitHub sign-in was not checked: could not load $githubAuthHelper ($githubAuthLoadError)"
     Warn "  if the toolkit came from a downloaded ZIP, inspect that file, then run: Unblock-File -LiteralPath '$githubAuthHelper'"
@@ -397,7 +400,6 @@ elseif (Have 'gh') {
     $auth = Get-GitHubAuthStatus
     if ($auth.Authenticated) {
         Ok "GitHub CLI is authenticated"
-        $githubAuthenticated = $true
         switch ($auth.WorkflowScope) {
             'present' { Ok 'active token has the workflow scope' }
             'missing' { Warn "active classic token lacks the 'workflow' scope; run: gh auth refresh --hostname github.com --scopes workflow" }
@@ -411,7 +413,7 @@ elseif (Have 'gh') {
         }
     }
 }
-else { Warn "GitHub CLI is missing; GitHub access and the optional MCP helper are unavailable" }
+else { Warn "GitHub CLI is missing; GitHub CLI access is unavailable" }
 
 if ([Environment]::GetEnvironmentVariable('GITHUB_MCP_PAT', 'User')) {
     Warn "Legacy user variable GITHUB_MCP_PAT detected. Remove it after GitHub CLI authentication is working."
@@ -444,32 +446,8 @@ else {
     else { Skip "claude: github is optional and is not configured automatically; see docs/agents.md" }
 }
 
-# --- Codex -----------------------------------------------------------------
-if ($Check) {
-    Skip "not editing $codexCfg"
-}
-elseif (-not (Test-Path $codexCfg)) {
-    Skip "no config.toml yet"
-}
-elseif (-not $codexCreated) {
-    Skip "codex: existing config preserved; review GitHub MCP setup in docs/agents.md"
-}
-elseif ($githubAuthenticated) {
-    try {
-        Add-ConfigText $codexCfg @'
-
-[mcp_servers.github]
-url = "https://api.githubcopilot.com/mcp/"
-# Read from the process environment. Launch Codex through helpers/codex-with-github-mcp.ps1.
-bearer_token_env_var = "GITHUB_MCP_PAT"
-'@
-        Ok "codex: github added to config.toml"
-    }
-    catch { Bad "could not append GitHub configuration: $_" }
-}
-else {
-    Skip "codex: github needs an authenticated GitHub CLI session"
-}
+# GitHub access stays in gh; never export its credential to Codex.
+Skip "codex: GitHub MCP is not configured automatically; use gh (see docs/agents.md)"
 
 # ---------------------------------------------------------------------------
 Say "9. Claude Code user settings"

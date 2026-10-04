@@ -168,6 +168,8 @@ if [ "$IS_MACOS" = 1 ]; then
   if [ "$WANT_RUST" = 1 ]; then PKGS="$PKGS pkgconf"; fi
 else
   PKGS="curl git gh"
+  # Minimal Fedora/WSL images may omit awk, which the scaffolder requires.
+  if ! have awk; then PKGS="$PKGS gawk"; fi
   if [ "$WANT_RUST" = 1 ]; then
     if [ "$PKG_MGR" = apt ]; then PKGS="$PKGS build-essential pkg-config"; else PKGS="$PKGS gcc pkg-config"; fi
   fi
@@ -178,7 +180,7 @@ pkg_installed() {
     dnf) rpm -q "$1" >/dev/null 2>&1 ;;
     apt) dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed' ;;
     brew) brew list --formula "$1" >/dev/null 2>&1 ;;
-    *) case "$1" in build-essential) have gcc ;; pkgconf) have pkg-config ;; *) have "$1" ;; esac ;;
+    *) case "$1" in build-essential) have gcc ;; pkgconf) have pkg-config ;; gawk) have awk ;; *) have "$1" ;; esac ;;
   esac
 }
 
@@ -222,6 +224,8 @@ else
     warn "  finish, then rerun; never delete lock files. --no-sudo skips these packages."
   fi
 fi
+
+have awk || bad "awk is required for project templates; install gawk and rerun"
 
 # Probe the supported option rather than assuming a particular release boundary.
 GH_ACTIVE=1
@@ -269,9 +273,14 @@ if have rustup && [ "$CHECK_ONLY" = 0 ]; then
   rustup component add rustfmt clippy && ok "rustfmt + clippy" \
     || bad "could not add rustfmt/clippy"
 fi
-if have rustc; then ok "$(rustc --version)"
-elif [ "$RUSTUP_FAILED" = 1 ]; then skip "rustc unavailable until rustup is installed (reported above)"
-else bad "rustc not on PATH (open a new terminal and rerun)"; fi
+if have rustc; then
+  if RUST_VERSION=$(rustc --version); then ok "$RUST_VERSION"
+  else bad "rustc --version failed; the selected Rust toolchain is not usable"; fi
+elif [ "$RUSTUP_FAILED" = 1 ]; then
+  skip "rustc unavailable until rustup is installed (reported above)"
+else
+  bad "rustc not on PATH (open a new terminal and rerun)"
+fi
 
 # Toolchain version requirements belong to each project.
 say "3. Cargo tools"
@@ -315,9 +324,10 @@ say "2p. Python (uv)"
 # uv manages Python versions, virtual environments, dependencies and uv.lock per
 # project, so no system Python packages are installed here.
 if have uv; then
-  ok "$(uv --version 2>/dev/null | head -1)"
+  if UV_VERSION=$(uv --version); then ok "$UV_VERSION"
+  else bad "uv --version failed; the selected Python stack is not usable"; fi
 elif [ "$CHECK_ONLY" = 1 ]; then
-  warn "uv not installed"
+  bad "uv not installed"
 else
   echo "  installing uv from https://astral.sh/uv ..."
   # The uv installer writes ~/.local/bin and adds it to the shell profile.
@@ -333,6 +343,8 @@ fi # Optional Python stack
 
 # ---------------------------------------------------------------------------
 say "4. VS Code extensions"
+INSTALLED_EXTS=""
+EXTENSIONS_CHECKED=0
 EXTS="timonwong.shellcheck ms-vscode.hexeditor usernamehw.errorlens github.vscode-github-actions github.vscode-pull-request-github redhat.vscode-yaml eamodio.gitlens gruntfuggly.todo-tree streetsidesoftware.code-spell-checker bierner.markdown-mermaid"
 if [ "$WANT_RUST" = 1 ]; then
   EXTS="$EXTS rust-lang.rust-analyzer vadimcn.vscode-lldb tamasfe.even-better-toml fill-labs.dependi"
@@ -341,6 +353,12 @@ if [ "$WANT_PYTHON" = 1 ]; then
   EXTS="$EXTS ms-python.python charliermarsh.ruff"
 fi
 
+if [ "$IS_WSL" = 1 ] && [ "$CHECK_ONLY" = 1 ]; then
+  # The Windows `code` shim downloads/replaces VS Code Server before it even
+  # lists extensions. Do not invoke it during a read-only check or doctor run.
+  skip "WSL extensions not queried in check mode: the code launcher may install VS Code Server"
+  warn "verify extensions in a connected VS Code WSL window, or run setup without --check"
+else
 if ! have code && [ "$IS_MACOS" = 1 ] && [ "$PKG_MGR" = brew ]; then
   if [ "$CHECK_ONLY" = 1 ] || [ "$NO_SUDO" = 1 ]; then
     warn "VS Code is missing. Install with: brew install --cask visual-studio-code"
@@ -363,6 +381,7 @@ if ! have code; then
   fi
 else
   if INSTALLED_EXTS=$(code --list-extensions 2>/dev/null); then
+  EXTENSIONS_CHECKED=1
   for e in $EXTS; do
     if printf '%s\n' "$INSTALLED_EXTS" | grep -Fqix "$e"; then
       ok "$e"
@@ -377,6 +396,7 @@ else
     bad "could not list VS Code extensions; skipping extension installation"
   fi
 fi
+fi # WSL read-only checks never initialize VS Code Server
 
 # ---------------------------------------------------------------------------
 if [ "$CONFIGURE_AGENTS" = 1 ]; then
@@ -387,7 +407,6 @@ have codex  && ok "codex $(codex --version 2>/dev/null | head -1)" \
   || warn "codex CLI not found. Install it (see START-HERE.md), then run 'codex' once to sign in."
 
 # Codex defaults. Written only if the file is absent.
-CODEX_CREATED=0
 if [ "$CHECK_ONLY" = 0 ] && [ ! -f "$HOME/.codex/config.toml" ]; then
   if mkdir -p "$HOME/.codex" && cat > "$HOME/.codex/config.toml" <<'TOML'
 # Codex owns whole tasks here, same as Claude Code, so it can write.
@@ -403,7 +422,7 @@ sandbox_mode = "workspace-write"
 [mcp_servers.context7]
 url = "https://mcp.context7.com/mcp"
 TOML
-  then CODEX_CREATED=1; ok "wrote ~/.codex/config.toml"
+  then ok "wrote ~/.codex/config.toml"
   else bad "could not write ~/.codex/config.toml"; fi
 elif [ -f "$HOME/.codex/config.toml" ]; then
   skip "$HOME/.codex/config.toml already exists, left alone"
@@ -446,9 +465,7 @@ else
 fi
 
 # A PAT must never be written to ~/.bashrc. This script checks GitHub CLI
-# authentication but never reads the token. Codex receives it only from the
-# companion launcher. Claude's PAT-backed GitHub MCP is an explicit manual choice
-# because it stores an authorization header in Claude's user-scoped MCP config.
+# authentication but never reads or forwards the token.
 GITHUB_AUTHENTICATED=0
 if have gh && gh_authenticated; then
   GITHUB_AUTHENTICATED=1
@@ -460,7 +477,7 @@ elif have gh; then
     warn "Run: gh auth login --hostname github.com --git-protocol https --web, then rerun this script"
   fi
 else
-  warn "GitHub CLI is missing; GitHub access and the optional MCP helper are unavailable"
+  warn "GitHub CLI is missing; GitHub CLI access is unavailable"
 fi
 
 if [ "$GITHUB_AUTHENTICATED" = 1 ]; then
@@ -523,30 +540,8 @@ else
   fi
 fi
 
-# --- Codex -----------------------------------------------------------------
-# context7 is written with the initial config above. The GitHub table contains no
-# credential. Only append to the configuration created by this invocation;
-# arbitrary existing TOML must be merged manually rather than guessed with regex.
-CODEX_CFG="$HOME/.codex/config.toml"
-if [ "$CHECK_ONLY" = 1 ]; then
-  skip "not editing $CODEX_CFG"
-elif [ ! -f "$CODEX_CFG" ]; then
-  skip "no ~/.codex/config.toml yet"
-elif [ "$CODEX_CREATED" = 0 ]; then
-  skip "codex: existing config preserved; review GitHub MCP setup in docs/agents.md"
-elif [ "$GITHUB_AUTHENTICATED" = 1 ]; then
-  if cat >> "$CODEX_CFG" <<'TOML'
-
-[mcp_servers.github]
-url = "https://api.githubcopilot.com/mcp/"
-# Read from the process environment. Launch with helpers/codex-with-github-mcp.sh.
-bearer_token_env_var = "GITHUB_MCP_PAT"
-TOML
-  then ok "codex: github added to config.toml"
-  else bad "could not append GitHub configuration"; fi
-else
-  skip "codex: github needs an authenticated GitHub CLI session"
-fi
+# GitHub access stays in gh; never export its credential to Codex.
+skip 'codex: GitHub MCP is not configured automatically; use gh (see docs/agents.md)'
 
 # ---------------------------------------------------------------------------
 say "8. Claude Code user settings"
@@ -612,7 +607,9 @@ if [ "$DOCTOR" = 1 ]; then
     case "$COMPONENTS" in *rustfmt*clippy*|*clippy*rustfmt*) ok "rustfmt and clippy installed";; *) warn "rustfmt or clippy missing";; esac
   fi
   if [ "$WANT_RUST" = 1 ]; then
-    if have code && code --list-extensions 2>/dev/null | grep -qix 'rust-lang.rust-analyzer'; then ok "VS Code rust-analyzer installed"; else warn "VS Code rust-analyzer not detected"; fi
+    if [ "$EXTENSIONS_CHECKED" = 0 ]; then skip "rust-analyzer not checked; editor extension listing was unavailable or skipped"
+    elif printf '%s\n' "$INSTALLED_EXTS" | grep -Fqix 'rust-lang.rust-analyzer'; then ok "VS Code rust-analyzer installed"
+    else warn "VS Code rust-analyzer not detected"; fi
   fi
   if [ "$WANT_PYTHON" = 1 ]; then
     if have uv; then ok "uv available"; else warn "uv not available"; fi

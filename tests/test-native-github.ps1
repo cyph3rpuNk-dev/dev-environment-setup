@@ -16,12 +16,8 @@ if "%TEST_NATIVE_GH%"=="unauth" (
   exit /b 1
 )
 if "%2"=="token" (
-  if "%TEST_NATIVE_GH%"=="tokenfail" (
-    echo fixture token failure 1>&2
-    exit /b 1
-  )
-  if not "%TEST_NATIVE_GH%"=="empty" echo fake-native-token
-  exit /b 0
+  echo UNEXPECTED_TOKEN_LOOKUP
+  exit /b 99
 )
 if "%TEST_NATIVE_GH%"=="old" if "%5"=="--active" (
   echo unknown flag: --active 1>&2
@@ -38,7 +34,7 @@ exit /b 0
     [IO.File]::WriteAllText("$fixture/gh.cmd", $gh.Replace("`n", "`r`n"), $utf8)
     $codex = @'
 @echo off
-if not "%GITHUB_MCP_PAT%"=="fake-native-token" exit /b 91
+echo UNEXPECTED_AGENT_LAUNCH
 exit /b 7
 '@
     [IO.File]::WriteAllText("$fixture/codex.cmd", $codex.Replace("`n", "`r`n"), $utf8)
@@ -51,7 +47,10 @@ $status = Get-GitHubAuthStatus
 Write-Output ("AUTH=" + $status.Authenticated + " SCOPE=" + $status.WorkflowScope)
 $env:GITHUB_MCP_PAT = 'fake-previous-token'
 try {
-    & (Join-Path $Root 'helpers/codex-with-github-mcp.ps1')
+    # Read the ErrorRecord message before formatting; Windows PowerShell wraps it.
+    # A narrow formatter ensures this assertion never depends on console width.
+    & (Join-Path $Root 'helpers/codex-with-github-mcp.ps1') 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String -Width 18 | Write-Output
     $result = $LASTEXITCODE
 } catch {
     Write-Output $_.Exception.Message
@@ -63,18 +62,18 @@ exit 0
 '@
     [IO.File]::WriteAllText("$fixture/runner.ps1", $runner, $utf8)
     $env:PATH = $fixture + [IO.Path]::PathSeparator + $savedPath
-    foreach ($mode in @('present', 'old', 'missing', 'unknown', 'unauth', 'tokenfail', 'empty')) {
+    foreach ($mode in @('present', 'old', 'missing', 'unknown', 'unauth')) {
         $env:TEST_NATIVE_GH = $mode
         $output = & $shellExe -NoProfile -File "$fixture/runner.ps1" $root $mode | Out-String
-        $expected = if ($mode -in @('unauth', 'tokenfail', 'empty')) { 1 } else { 7 }
+        $expected = 1
         if ($LASTEXITCODE -ne 0 -or $output -notmatch "RESULT=$expected") { throw "Native gh fixture failed ($mode): $output" }
         if ($mode -in @('old', 'unknown') -and $output -notmatch 'SCOPE=unknown') { throw 'Unknown scopes were asserted' }
         if ($mode -eq 'missing' -and $output -notmatch 'SCOPE=missing') { throw 'Account name mistaken for scope' }
         if ($mode -eq 'present' -and $output -notmatch 'SCOPE=present') { throw 'Native stderr scopes not captured' }
-        if ($mode -eq 'unauth' -and $output -notmatch 'GitHub CLI is not authenticated') { throw 'Friendly auth error missing' }
-        if ($mode -in @('tokenfail', 'empty') -and $output -notmatch 'did not provide a token') { throw 'Friendly token error missing' }
-        if ($output -match 'fake-native-token|fake-previous-token') { throw 'Token leaked to output' }
-        Write-Host "PASS: Native GitHub CLI stderr and launcher ($mode)"
+        if ($mode -eq 'unauth' -and $output -notmatch 'AUTH=False') { throw 'Unauthenticated status missing' }
+        if ($output -match 'fake-native-token|fake-previous-token|UNEXPECTED_') { throw 'Token leaked to output' }
+        if ($output -notmatch 'launcher is retired') { throw 'Migration guidance missing' }
+        Write-Host "PASS: Native GitHub CLI stderr and retired launcher ($mode)"
     }
 }
 finally {

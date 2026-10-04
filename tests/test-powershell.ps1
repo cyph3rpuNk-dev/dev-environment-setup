@@ -108,6 +108,7 @@ function Get-Command {
     if ($Name -eq 'rustup' -and $env:TEST_NO_RUSTUP -eq '1') { return }
     if ($Name -in @('rustc', 'cargo') -and $env:TEST_NO_RUST -eq '1') { return }
     if ($Name -eq 'gh' -and $env:TEST_NO_GH -eq '1') { return }
+    if ($Name -eq 'uv' -and $env:TEST_NO_UV -eq '1') { return }
     Microsoft.PowerShell.Core\Get-Command $Name -ErrorAction SilentlyContinue
 }
 function code { Record 'code' $args }
@@ -126,7 +127,7 @@ function git {
 function gh { Record 'gh' $args }
 function pwsh { Record 'pwsh' $args }
 function rustup { Record 'rustup' $args; 'stable-x86_64-pc-windows-msvc rustfmt clippy' }
-function rustc { Record 'rustc' $args; "rustc fixture`nhost: x86_64-pc-windows-msvc" }
+function rustc { Record 'rustc' $args; if ($env:TEST_BROKEN_RUSTC -eq '1') { $global:LASTEXITCODE = 42; return }; "rustc fixture`nhost: x86_64-pc-windows-msvc" }
 function cargo { Record 'cargo' $args }
 function cargo-binstall { Record 'cargo-binstall' $args }
 function cargo-nextest {}
@@ -134,7 +135,7 @@ function cargo-audit {}
 function cargo-deny {}
 function bacon {}
 function typos {}
-function uv { Record 'uv' $args }
+function uv { Record 'uv' $args; if ($env:TEST_BROKEN_UV -eq '1') { $global:LASTEXITCODE = 43; return }; 'uv fixture' }
 function claude { Record 'claude' $args; 'context7 github' }
 function codex { Record 'codex' $args }
 function wsl { Record 'wsl' $args }
@@ -205,8 +206,28 @@ exit $result
     $null = New-Item -ItemType Directory -Path $fixture
     $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" (Join-Path $blockedRoot 'bootstrap-windows.ps1') $fixture 'Base' -Inspect | Out-String
     Assert ($LASTEXITCODE -eq 1 -and $output -match 'GitHub sign-in was not checked' -and $output -match 'simulated blocked file' -and $output -match 'Unblock-File -LiteralPath' -and $output -notmatch 'GitHub CLI is not authenticated') 'Unloadable GitHub helper is reported by name'
-    try { & (Join-Path $blockedRoot 'helpers/codex-with-github-mcp.ps1'); throw 'Expected helper load failure' }
-    catch { Assert ($_.ToString() -match 'Could not load .*github-auth\.ps1' -and $_.ToString() -match 'Unblock-File') 'Codex launcher names an unloadable GitHub helper' }
+    $output = & (Join-Path $blockedRoot 'helpers/codex-with-github-mcp.ps1') 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String -Width 18
+    Assert ($LASTEXITCODE -eq 1 -and $output -match 'launcher is retired' -and $output -notmatch 'simulated blocked file') 'Retired launcher never loads the GitHub credential helper'
+
+
+    foreach ($case in @(
+        @{ Flag = 'TEST_NO_UV'; Stack = 'Python'; Message = 'uv \(Python projects\) is missing' },
+        @{ Flag = 'TEST_BROKEN_UV'; Stack = 'Python'; Message = 'uv --version failed' },
+        @{ Flag = 'TEST_BROKEN_RUSTC'; Stack = 'Rust'; Message = 'rustc --version failed' }
+    )) {
+        $fixture = Join-Path $testRoot $case.Flag
+        $null = New-Item -ItemType Directory -Path $fixture
+        $savedFlag = [Environment]::GetEnvironmentVariable($case.Flag, 'Process')
+        try {
+            [Environment]::SetEnvironmentVariable($case.Flag, '1', 'Process')
+            foreach ($mode in @('Inspect', 'Diagnose')) {
+                $modeArgument = '-' + $mode
+                $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture $case.Stack $modeArgument | Out-String
+                Assert ($LASTEXITCODE -ne 0 -and $output -match $case.Message) "Windows $mode fails for $($case.Flag)"
+            }
+        } finally { [Environment]::SetEnvironmentVariable($case.Flag, $savedFlag, 'Process') }
+    }
 
     $fixture = Join-Path $testRoot 'profile-invalid'
     $null = New-Item -ItemType Directory -Path $fixture
@@ -228,8 +249,8 @@ exit $result
     & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -Agents
     $after = @($written | ForEach-Object { [IO.File]::ReadAllText($_) })
     Assert ($before[0] -eq $after[0] -and $before[1] -eq $after[1]) 'Agent configuration is unchanged on rerun'
-    Assert (([regex]::Matches($after[0], '(?m)^\[mcp_servers\.github\]')).Count -eq 1) 'GitHub MCP table is not duplicated'
-    foreach ($existing in @('# [mcp_servers.github] is only a comment', '[mcp_servers."github"]')) {
+    Assert ($after[0] -notmatch 'mcp_servers\.github|GITHUB_MCP_PAT') 'New agent config never enables GitHub MCP or token inheritance'
+    foreach ($existing in @('# [mcp_servers.github] is only a comment', '[mcp_servers."github"]', "[mcp_servers.github]`nbearer_token_env_var = 'GITHUB_MCP_PAT'", "[mcp_servers.github]`nurl = 'https://example.invalid/custom'")) {
         [IO.File]::WriteAllText($written[0], $existing, $utf8)
         & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -Agents | Out-Null
         Assert ([IO.File]::ReadAllText($written[0]) -ceq $existing) 'Existing TOML remains byte-for-byte unchanged regardless of table spelling'
@@ -261,43 +282,22 @@ exit $result
     }
     finally { Remove-Item Env:\TEST_GIT_NAME, Env:\TEST_GIT_EMAIL -ErrorAction SilentlyContinue }
 
-    # Helpers invoke these functions, so no real auth lookup or agent can run.
-    function gh {
-        $global:LASTEXITCODE = 0
-        if ($global:TestOldGh -and $args -contains '--active') { $global:LASTEXITCODE = 1; 'unknown flag: --active'; return }
-        if ($args[1] -eq 'token') {
-            if ($global:TestTokenFailure) { $global:LASTEXITCODE = 1; return }
-            if (-not $global:TestEmptyToken) { 'fake-test-token' }
-        }
-    }
-    function codex {
-        Assert ($env:GITHUB_MCP_PAT -eq 'fake-test-token') 'Codex child sees fake token'
-        if ($global:TestLaunchFailure) { throw 'simulated launch failure' }
-        $global:LASTEXITCODE = 7
-    }
+    # Old entry points must stop before any auth lookup or agent launch.
+    $global:RetiredGhCalls = 0
+    $global:RetiredCodexCalls = 0
+    function gh { $global:RetiredGhCalls++; throw 'Unexpected credential access' }
+    function codex { $global:RetiredCodexCalls++; throw 'Unexpected agent launch' }
     $previousToken = $env:GITHUB_MCP_PAT
     try {
         foreach ($initial in @($null, 'fake-existing-token')) {
             $env:GITHUB_MCP_PAT = $initial
-            & "$root/helpers/codex-with-github-mcp.ps1"
-            Assert ($LASTEXITCODE -eq 7) 'Credential helper propagates Codex exit code'
-            Assert ($env:GITHUB_MCP_PAT -eq $initial) 'Credential helper restores caller environment'
+            $output = & "$root/helpers/codex-with-github-mcp.ps1" --version 2>&1 |
+                ForEach-Object { $_.ToString() } | Out-String -Width 18
+            Assert ($LASTEXITCODE -eq 1 -and $output -match 'launcher is retired') 'Retired launcher fails with migration guidance'
+            Assert ($env:GITHUB_MCP_PAT -eq $initial) 'Retired launcher leaves caller environment unchanged'
+            Assert ($output -notmatch 'fake-existing-token') 'Retired launcher never prints credentials'
         }
-        $global:TestOldGh = $true
-        & "$root/helpers/codex-with-github-mcp.ps1"
-        Assert ($LASTEXITCODE -eq 7 -and $env:GITHUB_MCP_PAT -eq 'fake-existing-token') 'Older GitHub CLI fallback launches and restores the environment'
-        $global:TestOldGh = $false
-        $global:TestLaunchFailure = $true
-        try { & "$root/helpers/codex-with-github-mcp.ps1"; throw 'Expected launch failure' }
-        catch { Assert ($_.ToString() -match 'simulated launch failure') 'Launch error propagates' }
-        Assert ($env:GITHUB_MCP_PAT -eq 'fake-existing-token') 'Token restored after launch exception'
-        $global:TestLaunchFailure = $false
-        foreach ($scenario in 'TestEmptyToken', 'TestTokenFailure') {
-            Set-Variable -Scope Global -Name $scenario -Value $true
-            try { & "$root/helpers/codex-with-github-mcp.ps1"; throw 'Expected token rejection' }
-            catch { Assert ($_.ToString() -match 'did not provide a token') "Helper rejects $scenario" }
-            Set-Variable -Scope Global -Name $scenario -Value $false
-        }
+        Assert ($global:RetiredGhCalls -eq 0 -and $global:RetiredCodexCalls -eq 0) 'Retired launcher never calls gh or codex'
     } finally { $env:GITHUB_MCP_PAT = $previousToken }
 
     # Execute the real fixed bridge command with redirected stdin and a stubbed
