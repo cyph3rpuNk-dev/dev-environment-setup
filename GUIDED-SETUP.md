@@ -283,7 +283,9 @@ decisions". Do the same for the placeholders in `AGENTS.md`.
 - **Python or Rust:** `--stack` already filled the gate. Initialize the language:
   `uv init --app .` then `uv add --dev ruff pytest` for Python; `cargo init --vcs none`
   then `cargo generate-lockfile` for Rust (the scaffolder already created Git and
-  `.gitignore`, and the gate's `--locked` needs `Cargo.lock`).
+  `.gitignore`, and the gate's `--locked` needs `Cargo.lock`). For Python, pytest fails
+  when it finds no tests, so add a first test before running the gate, or delete the
+  gate's test line and record it under "Open decisions".
 - **Any other language** (for example PHP for a WordPress plugin): the toolkit neither
   installs it nor fills its gate, and the gate refuses to run until its placeholders
   are replaced. Say so. Install the language in the chosen environment by following its
