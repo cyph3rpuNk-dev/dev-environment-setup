@@ -59,6 +59,20 @@ function Warn ($m) { Write-Host "  warn  $m" -ForegroundColor Yellow }
 function Bad  ($m) { Write-Host "  FAIL  $m" -ForegroundColor Red; $script:Failures++ }
 function Have ($c) { [bool](Get-Command $c -ErrorAction SilentlyContinue) }
 
+# Rust proxies can install a project-selected toolchain even for --version.
+# Limit the override to the probe and restore it even if the command throws.
+function Invoke-RustProbe {
+    param([string]$Command, [string[]]$Arguments)
+    $previousAutoInstall = $env:RUSTUP_AUTO_INSTALL
+    try {
+        if ($Check) { $env:RUSTUP_AUTO_INSTALL = '0' }
+        $PSNativeCommandUseErrorActionPreference = $false
+        $output = @(& $Command @Arguments 2>$null)
+        [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join "`n") }
+    }
+    finally { $env:RUSTUP_AUTO_INSTALL = $previousAutoInstall }
+}
+
 # Agents and Node-based tools reject a UTF-8 byte-order mark in JSON, and Windows
 # PowerShell 5.1 writes one for -Encoding UTF8. Write configuration without it.
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -91,11 +105,11 @@ function Get-VirtualizationState {
     catch { return 'Unknown' }
 }
 
-function ConvertTo-WslPath ([string]$WindowsPath) {
-    if ($WindowsPath -match '^([A-Za-z]):\\(.*)$') {
-        return '/mnt/' + $Matches[1].ToLowerInvariant() + '/' + ($Matches[2] -replace '\\', '/')
-    }
-    return $WindowsPath
+# Resolve when the printed command runs inside the user's chosen distribution.
+# A shell-quoted argument preserves spaces, apostrophes and shell metacharacters.
+function ConvertTo-WslPathExpression ([string]$WindowsPath) {
+    $escaped = $WindowsPath.Replace("'", ("'" + '"' + "'" + '"' + "'"))
+    return '"$(wslpath -u ' + "'" + $escaped + "'" + ')"'
 }
 
 # ---------------------------------------------------------------------------
@@ -170,18 +184,21 @@ if (Have 'rustup') {
         if ($LASTEXITCODE -eq 0) { Ok "rustfmt + clippy installed" }
         else { Bad "could not install rustfmt + clippy" }
     }
-    $hostLine = (rustup show active-toolchain 2>$null | Out-String).Trim()
-    $msvcHost = $LASTEXITCODE -eq 0 -and $hostLine -match '^\S+-windows-msvc(?:\s|$)'
+    $hostProbe = Invoke-RustProbe -Command rustup -Arguments @('show', 'active-toolchain')
+    $hostLine = $hostProbe.Output.Trim()
+    $msvcHost = $hostProbe.ExitCode -eq 0 -and $hostLine -match '^\S+-windows-msvc(?:\s|$)'
     if ($msvcHost) { Ok "MSVC host toolchain in use" }
     else { Warn "MSVC host toolchain not detected. For Windows-native Rust use: rustup default stable-x86_64-pc-windows-msvc" }
 }
 else { Skip "rustup unavailable (reported in Base tools); component setup skipped" }
 
 if (Have 'rustc') {
-    $rustVersion = (rustc --version 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -eq 0) { Ok $rustVersion }
+    $rustProbe = Invoke-RustProbe -Command rustc -Arguments @('--version')
+    if ($rustProbe.ExitCode -eq 0) { Ok $rustProbe.Output.Trim() }
     else { Bad "rustc --version failed; the selected Rust toolchain is not usable" }
 }
+elseif (Have 'rustup') { Bad "rustc is missing; repair the selected Rust toolchain" }
+else { Skip "rustc unavailable until rustup is installed (reported above)" }
 
 # The single most common Windows Rust failure is a missing MSVC linker, and it
 # only shows up at link time. So actually link something.
@@ -323,13 +340,13 @@ elseif ($virtualization -eq 'Unknown') { Warn "could not read the virtualisation
 else { Ok "virtualisation available" }
 
 $wslDistros = @(Get-WslDistribution)
-$toolkitInWsl = ConvertTo-WslPath $PSScriptRoot
+$toolkitInWsl = ConvertTo-WslPathExpression $PSScriptRoot
 if (-not (Have 'wsl')) {
     Bad "wsl.exe not found. WSL needs Windows 10 version 2004 or later, or Windows 11."
 }
 elseif ($wslDistros.Count -gt 0) {
     Ok ("registered distributions: " + ($wslDistros -join ', '))
-    Write-Host "  Inside the distribution:  cd '$toolkitInWsl' && bash bootstrap-linux.sh --check"
+    Write-Host "  Inside the distribution:  cd $toolkitInWsl && bash bootstrap-linux.sh --check"
 }
 elseif ($Check -or -not $InstallMissing) {
     Warn "no WSL distribution is registered. Enable WSL with: -Wsl -InstallMissing from an Administrator PowerShell"
@@ -540,8 +557,9 @@ if ($Doctor) {
     }
     else { Warn "WSL is unavailable" }
     if ($wantRust -and (Have 'rustup')) {
-        $components = (rustup component list --installed 2>$null | Out-String)
-        if ($components -match 'rustfmt' -and $components -match 'clippy') { Ok "rustfmt and clippy installed" }
+        $componentProbe = Invoke-RustProbe -Command rustup -Arguments @('component', 'list', '--installed')
+        $components = $componentProbe.Output
+        if ($componentProbe.ExitCode -eq 0 -and $components -match 'rustfmt' -and $components -match 'clippy') { Ok "rustfmt and clippy installed" }
         else { Warn "rustfmt or clippy missing" }
     }
     if ($wantPython) {

@@ -106,6 +106,13 @@ add_path_dir() {
   case ":$PATH:" in *":$1:"*) ;; *) if [ -d "$1" ]; then PATH="$1:$PATH"; fi ;; esac
 }
 
+# Scope the setting to each probe so check/doctor cannot auto-install a missing
+# project-selected toolchain, and the caller's environment remains unchanged.
+rust_probe() (
+  if [ "$CHECK_ONLY" = 1 ]; then export RUSTUP_AUTO_INSTALL=0; fi
+  "$@"
+)
+
 # Download an installer to a private temporary file and run it only if the
 # download completed. A partial script is never executed.
 run_downloaded_installer() {
@@ -251,7 +258,7 @@ fi
 # no cargo) are reported as skips so one cause is not counted three times.
 RUSTUP_FAILED=0
 if have rustup; then
-  ok "rustup $(rustup --version 2>/dev/null | head -1)"
+  ok "rustup $(rust_probe rustup --version 2>/dev/null | head -1)"
 elif [ "$CHECK_ONLY" = 1 ]; then
   bad "rustup not installed"; RUSTUP_FAILED=1
 else
@@ -274,7 +281,7 @@ if have rustup && [ "$CHECK_ONLY" = 0 ]; then
     || bad "could not add rustfmt/clippy"
 fi
 if have rustc; then
-  if RUST_VERSION=$(rustc --version); then ok "$RUST_VERSION"
+  if RUST_VERSION=$(rust_probe rustc --version); then ok "$RUST_VERSION"
   else bad "rustc --version failed; the selected Rust toolchain is not usable"; fi
 elif [ "$RUSTUP_FAILED" = 1 ]; then
   skip "rustc unavailable until rustup is installed (reported above)"
@@ -603,7 +610,7 @@ if [ "$DOCTOR" = 1 ]; then
     ok "native Linux kernel"
   fi
   if [ "$WANT_RUST" = 1 ] && have rustup; then
-    COMPONENTS=$(rustup component list --installed 2>/dev/null || true)
+    COMPONENTS=$(rust_probe rustup component list --installed 2>/dev/null || true)
     case "$COMPONENTS" in *rustfmt*clippy*|*clippy*rustfmt*) ok "rustfmt and clippy installed";; *) warn "rustfmt or clippy missing";; esac
   fi
   if [ "$WANT_RUST" = 1 ]; then

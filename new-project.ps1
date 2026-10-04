@@ -53,11 +53,11 @@ function ConvertTo-YesNo ([string]$Label, [string]$Answer) {
         default { Stop-NewProject "answer yes or no for -$Label (got '$Answer')" }
     }
 }
-function ConvertTo-WslPath ([string]$WindowsPath) {
-    if ($WindowsPath -match '^([A-Za-z]):\\(.*)$') {
-        return '/mnt/' + $Matches[1].ToLowerInvariant() + '/' + ($Matches[2] -replace '\\', '/')
-    }
-    return $WindowsPath
+# Resolve when the printed command runs inside the user's chosen distribution.
+# A shell-quoted argument preserves spaces, apostrophes and shell metacharacters.
+function ConvertTo-WslPathExpression ([string]$WindowsPath) {
+    $escaped = $WindowsPath.Replace("'", ("'" + '"' + "'" + '"' + "'"))
+    return '"$(wslpath -u ' + "'" + $escaped + "'" + ')"'
 }
 
 if (-not $Name) { $Name = Read-Answer 'Name' 'Repository name (for example my-tool)' }
@@ -106,8 +106,8 @@ if ($Environment -eq 'Linux') {
     Write-Host "Recommended environment: Linux, because $reason."
     Write-Host 'On this Windows machine that means WSL (bootstrap-windows.ps1 -Wsl sets it up).'
     Write-Host 'Open your WSL terminal and run:'
-    $bashPath = ((ConvertTo-WslPath $PSScriptRoot) + '/new-project.sh').Replace("'", ("'" + '"' + "'" + '"' + "'"))
-    Write-Host ("  bash '" + $bashPath + "' --name $Name --environment linux$stackOption$claudeOption")
+    $bashPath = ConvertTo-WslPathExpression (Join-Path $PSScriptRoot 'new-project.sh')
+    Write-Host ("  bash " + $bashPath + " --name $Name --environment linux$stackOption$claudeOption")
     Write-Host 'Nothing was created.'
     exit 3
 }

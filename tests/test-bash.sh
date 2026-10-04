@@ -143,6 +143,12 @@ cat > "$TEST_ROOT/mock-bin/mock" <<'MOCK'
 #!/usr/bin/env bash
 name=${0##*/}
 printf '%s\n' "$name $*" >> "$TEST_EVENTS"
+if [ "${TEST_RUST_PROBE:-0}" = 1 ]; then
+  case "$name" in
+    rustup|rustc) [ "${RUSTUP_AUTO_INSTALL:-1}" = 0 ] || touch "$TEST_EVENTS.auto-installed" ;;
+    gh) [ "${RUSTUP_AUTO_INSTALL-unset}" = "$TEST_ORIGINAL_AUTO_INSTALL" ] || exit 91 ;;
+  esac
+fi
 missing() { case " ${TEST_MISSING_PKGS:-} " in *" $1 "*) return 0;; esac; return 1; }
 case "$name" in
   sudo)
@@ -291,6 +297,24 @@ for mode in --check --doctor; do
   [ "$result" -ne 0 ] && grep -q 'uv --version failed' "$TEST_ROOT/broken-uv.log" || fail 'broken uv passed readiness'
 done
 pass 'Selected runtimes must exist and pass version probes in check and doctor modes'
+mkdir -p "$TEST_ROOT/pinned-project"
+printf '[toolchain]\nchannel = "1.85.0"\n' > "$TEST_ROOT/pinned-project/rust-toolchain.toml"
+for initial in unset 0 1; do
+  for mode in --check --doctor; do
+    result=0
+    (
+      if [ "$initial" = unset ]; then unset RUSTUP_AUTO_INSTALL; else export RUSTUP_AUTO_INSTALL="$initial"; fi
+      export TEST_ORIGINAL_AUTO_INSTALL="$initial" TEST_RUST_PROBE=1 TEST_BROKEN_RUSTC=1
+      cd "$TEST_ROOT/pinned-project"
+      run_bootstrap fedora native "$mode" --stack=rust
+    ) > "$TEST_ROOT/rust-probe.log" || result=$?
+    [ "$result" -ne 0 ] && grep -q 'rustc --version failed' "$TEST_ROOT/rust-probe.log" || fail 'absent pinned toolchain did not fail'
+    [ ! -e "$TEST_EVENTS.auto-installed" ] || fail 'read-only Rust probe enabled automatic installation'
+    grep -q 'GitHub CLI is authenticated' "$TEST_ROOT/rust-probe.log" || fail 'Rust probe changed environment for later commands'
+  done
+done
+pass 'Rust checks suppress automatic toolchain installation and preserve caller settings'
+
 
 : > "$TEST_EVENTS"
 run_bootstrap fedora wsl --no-sudo --stack=rust --configure-agents > "$TEST_ROOT/first.log"
@@ -803,6 +827,33 @@ bad_case generated-emoji 'co-author or attribution line' owner "$OWNER" "$OWNER"
 bad_case generated-tool 'co-author or attribution line' owner "$OWNER" "$OWNER" $'fix: work\n\nGenerated with Codex'
 bad_case other-session 'co-author or attribution line' owner "$OWNER" "$OWNER" $'fix: work\n\nCodex-Session: https://example.invalid/session'
 pass 'Identity check rejects Claude, bot and foreign identities and every attribution line'
+# Avoid command-line size limits; an early match must survive a message larger
+# than the pipe buffer on every platform (including Windows Git Bash).
+git -C "$ID" switch -q -c long-message main
+{
+  printf 'fix: long message\n\nCo-authored-by: Other <other@example.invalid>\n\n'
+  awk 'BEGIN { for (i=0; i<50000; i++) print "unrelated message padding" }'
+} > "$TEST_ROOT/long-message.txt"
+env GIT_AUTHOR_NAME=owner GIT_AUTHOR_EMAIL="$OWNER" GIT_COMMITTER_NAME=owner GIT_COMMITTER_EMAIL="$OWNER" \
+  git -C "$ID" -c commit.gpgsign=false commit -q --allow-empty -F "$TEST_ROOT/long-message.txt"
+if check_identity long-message; then fail 'long message bypassed attribution policy'; fi
+grep -q 'co-author or attribution line' "$TEST_ROOT/identity.log" || fail 'long message was not diagnosed'
+pass 'Identity check rejects attribution before a long message body'
+
+# grep can exist but fail at runtime; a Git message-read failure must also fail closed.
+mkdir -p "$TEST_ROOT/failing-matcher" "$TEST_ROOT/failing-message"
+printf '#!/bin/sh\nexit 2\n' > "$TEST_ROOT/failing-matcher/grep"
+real_git=$(command -v git)
+printf '#!/bin/sh\ncase "$*" in *--format=%%B*) exit 73;; esac\nexec "%s" "$@"\n' "$real_git" > "$TEST_ROOT/failing-message/git"
+chmod +x "$TEST_ROOT/failing-matcher/grep" "$TEST_ROOT/failing-message/git"
+for scenario in failing-matcher failing-message; do
+  result=0
+  (cd "$ID" && PATH="$TEST_ROOT/$scenario:$PATH" ALLOWED_EMAILS="$OWNER" bash "$ROOT/scripts/check-commit-identity.sh" main) > "$TEST_ROOT/$scenario.log" 2>&1 || result=$?
+  [ "$result" -ne 0 ] || fail "$scenario incorrectly passed"
+  grep -Eq 'attribution matcher failed|could not read commit message' "$TEST_ROOT/$scenario.log" || fail "$scenario lacked a diagnostic"
+done
+pass 'Identity check fails closed on matcher and message-read errors'
+
 result=0
 (cd "$ID" && env -u ALLOWED_EMAILS bash "$ROOT/scripts/check-commit-identity.sh" main) > "$TEST_ROOT/identity.log" 2>&1 || result=$?
 [ "$result" -ne 0 ] || fail 'identity check ran without an allowed identity'
