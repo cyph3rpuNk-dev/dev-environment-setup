@@ -418,6 +418,15 @@ else { Warn "GitHub CLI is missing; GitHub CLI access is unavailable" }
 if ([Environment]::GetEnvironmentVariable('GITHUB_MCP_PAT', 'User')) {
     Warn "Legacy user variable GITHUB_MCP_PAT detected. Remove it after GitHub CLI authentication is working."
 }
+# Report, never edit: the retired launcher's Codex entry forwarded GITHUB_MCP_PAT.
+# Lines with a '#' before the key are comments and do not count.
+$legacyCodexCfg = Join-Path (Join-Path $env:USERPROFILE '.codex') 'config.toml'
+$legacyCodexPattern = '^[^#]*bearer_token_env_var\s*=\s*["'']GITHUB_MCP_PAT["'']'
+if ((Test-Path -LiteralPath $legacyCodexCfg -PathType Leaf) -and
+    (Select-String -LiteralPath $legacyCodexCfg -Pattern $legacyCodexPattern -CaseSensitive -Quiet -ErrorAction SilentlyContinue)) {
+    Warn "Legacy Codex GitHub MCP entry (bearer_token_env_var = `"GITHUB_MCP_PAT`") detected in $legacyCodexCfg."
+    Warn "  remove that server's table; see 'Migrate from the retired GitHub MCP launcher' in docs\agents.md"
+}
 
 # ---------------------------------------------------------------------------
 if ($ConfigureAgents) {

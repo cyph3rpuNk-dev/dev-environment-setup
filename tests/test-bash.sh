@@ -253,10 +253,17 @@ for mode in --check --doctor; do
 done
 pass 'WSL check and doctor never initialize the editor, including the Rust probe'
 
+baseline=0
+run_bootstrap fedora native --check > "$TEST_ROOT/with-awk.log" || baseline=$?
 mv "$TEST_ROOT/utilities/awk" "$TEST_ROOT/awk.saved"
 result=0
 TEST_MISSING_PKGS=gawk run_bootstrap fedora native --check > "$TEST_ROOT/no-awk.log" || result=$?
-[ "$result" -ne 0 ] && grep -q 'awk is required' "$TEST_ROOT/no-awk.log" || fail 'missing awk passed readiness'
+grep -q 'FAIL.*gawk is missing' "$TEST_ROOT/no-awk.log" || fail 'missing awk passed readiness'
+grep -q 'awk unavailable until gawk is installed' "$TEST_ROOT/no-awk.log" || fail 'awk consequence not explained'
+[ "$result" -eq $((baseline + 1)) ] || fail "missing awk counted $((result - baseline)) failures instead of one"
+result=0
+TEST_MISSING_PKGS=gawk run_bootstrap fedora native --no-sudo > "$TEST_ROOT/no-awk-nosudo.log" || result=$?
+[ "$(grep -c 'FAIL.*awk' "$TEST_ROOT/no-awk-nosudo.log")" -eq 1 ] || fail 'missing awk counted twice without sudo'
 result=0
 env HOME="$TEST_ROOT/user" PATH="$TEST_ROOT/mock-bin:$TEST_ROOT/utilities" \
   DEVSETUP_KERNEL=Linux DEVSETUP_PROC_VERSION="$TEST_ROOT/os/native" \
@@ -273,7 +280,7 @@ for os in fedora ubuntu; do
   rm "$TEST_ROOT/utilities/awk"
 done
 mv "$TEST_ROOT/awk.saved" "$TEST_ROOT/utilities/awk"
-pass 'Minimal Linux installs awk; scaffolding fails before writes when awk is unavailable'
+pass 'Minimal Linux installs awk, counts a missing awk once, and scaffolding fails before writes without it'
 
 mv "$TEST_ROOT/mock-bin/uv" "$TEST_ROOT/uv.saved"
 for mode in --check --doctor; do
@@ -463,11 +470,27 @@ grep -q 'permission could not be determined' "$TEST_ROOT/scopes.log" || fail 'fi
 printf 'export GITHUB_MCP_PAT=fake-profile-secret\n' > "$TEST_ROOT/user/.zshrc"
 run_bootstrap ubuntu native --check > "$TEST_ROOT/profiles.log"
 grep -Fq '.zshrc' "$TEST_ROOT/profiles.log" && ! grep -q fake-profile-secret "$TEST_ROOT/profiles.log" || fail 'zsh legacy warning missing or leaked value'
+codex_config="$TEST_ROOT/user/.codex/config.toml"
+cp "$codex_config" "$TEST_ROOT/codex-config.saved"
+for case in \
+  'warn|[mcp_servers.github]\nurl = "https://example.invalid/mcp"\nbearer_token_env_var = "GITHUB_MCP_PAT"\n' \
+  "warn|mcp_servers.github = { bearer_token_env_var = 'GITHUB_MCP_PAT' }\n" \
+  'quiet|[mcp_servers.github]\n# bearer_token_env_var = "GITHUB_MCP_PAT"\n' \
+  'quiet|[mcp_servers.github]\nbearer_token_env_var = "CUSTOM_GITHUB_TOKEN"\n'; do
+  # shellcheck disable=SC2059 # The fixture's \n escapes are intended.
+  printf "${case#*|}" > "$codex_config"
+  cp "$codex_config" "$TEST_ROOT/codex-config.before"
+  run_bootstrap ubuntu native --check > "$TEST_ROOT/codex-legacy.log" || true
+  cmp -s "$codex_config" "$TEST_ROOT/codex-config.before" || fail 'legacy Codex check modified the configuration'
+  if grep -q 'Legacy Codex GitHub MCP entry' "$TEST_ROOT/codex-legacy.log"; then found=warn; else found=quiet; fi
+  [ "$found" = "${case%%|*}" ] || fail "legacy Codex entry check expected ${case%%|*}, got $found: ${case#*|}"
+done
+cp "$TEST_ROOT/codex-config.saved" "$codex_config"
 : > "$TEST_EVENTS"
 TEST_MCP_LOOKALIKE=1 run_bootstrap ubuntu native --configure-agents > "$TEST_ROOT/mcp.log"
 grep -q '^claude mcp get github$' "$TEST_EVENTS" && grep -q 'github is optional' "$TEST_ROOT/mcp.log" || fail 'lookalike MCP mistaken for github'
 grep -q '^claude mcp add .* context7 ' "$TEST_EVENTS" || fail 'lookalike prevented context7 installation'
-pass 'Auth scopes, profile warnings and exact MCP names avoid false positives'
+pass 'Auth scopes, legacy profile and Codex warnings, and exact MCP names avoid false positives'
 
 for tool in rustup uv; do
   mv "$TEST_ROOT/mock-bin/$tool" "$TEST_ROOT/$tool.saved"
@@ -743,6 +766,11 @@ result=0
 new_project --name winmixed --parent "$NP" --environment WINDOWS --stack RUST > "$TEST_ROOT/handoff-case.log" || result=$?
 [ "$result" -eq 3 ] && grep -q -- '-Environment Windows -Stack rust' "$TEST_ROOT/handoff-case.log" || fail 'upper-case Windows handoff failed'
 pass 'Scaffolder accepts environment and stack in any case'
+# pytest exits 5 with no tests, so the printed steps must ask for one before the gate.
+new_project --name pysteps --parent "$NP" --environment linux --stack python > "$TEST_ROOT/np-python.log"
+grep -q 'pytest fails when it finds no tests: add a first test before step 5' "$TEST_ROOT/np-python.log" \
+  || fail 'Python next steps omit the first-test requirement'
+pass 'Python next steps require a first test before the gate'
 # The Rust next step keeps the scaffolder's single /target/ entry: plain cargo init
 # would append another. Cargo runs only where installed; it needs no network here.
 new_project --name rusty --parent "$NP" --environment linux --stack rust > "$TEST_ROOT/np-rust.log"

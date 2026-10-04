@@ -286,7 +286,11 @@ Next steps:
   2. Fill in PROJECT-CHARTER.md. Leave unknown answers as visible open decisions.
 EOF
 case "$STACK" in
-  python) echo "  3. uv init --app .   then   uv add --dev ruff pytest   (review the generated files)" ;;
+  python)
+    echo "  3. uv init --app .   then   uv add --dev ruff pytest   (review the generated files)"
+    # pytest exits 5 when it collects nothing, so a fresh project's gate cannot pass yet.
+    echo "     pytest fails when it finds no tests: add a first test before step 5, or delete"
+    echo "     the gate's test line and record that under \"Open decisions\" in PROJECT-CHARTER.md." ;;
   # --vcs none: Git and .gitignore already exist; plain cargo init appends a second /target entry.
   rust)   echo "  3. cargo init --vcs none   (review the generated manifest and add rust-toolchain.toml deliberately)" ;;
   *)      echo "  3. Choose a stack, then replace the placeholders in scripts/check.sh with its commands." ;;

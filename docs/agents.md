@@ -141,6 +141,7 @@ without looking up a credential or launching an agent.
    `bearer_token_env_var = "GITHUB_MCP_PAT"`, remove that server's table and its
    associated subtables. Preserve other servers and customized GitHub configurations.
    The bootstrap preserves existing config files; it does not perform this migration.
+   It warns when it finds `bearer_token_env_var = "GITHUB_MCP_PAT"` outside a comment.
 3. Remove old `GITHUB_MCP_PAT` exports from shell profiles or persistent Windows user
    variables, if present, and restart affected terminals and agents. Do not print the
    variable's value. No variable is needed for ordinary `gh` commands.

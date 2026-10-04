@@ -250,10 +250,21 @@ exit $result
     $after = @($written | ForEach-Object { [IO.File]::ReadAllText($_) })
     Assert ($before[0] -eq $after[0] -and $before[1] -eq $after[1]) 'Agent configuration is unchanged on rerun'
     Assert ($after[0] -notmatch 'mcp_servers\.github|GITHUB_MCP_PAT') 'New agent config never enables GitHub MCP or token inheritance'
-    foreach ($existing in @('# [mcp_servers.github] is only a comment', '[mcp_servers."github"]', "[mcp_servers.github]`nbearer_token_env_var = 'GITHUB_MCP_PAT'", "[mcp_servers.github]`nurl = 'https://example.invalid/custom'")) {
-        [IO.File]::WriteAllText($written[0], $existing, $utf8)
-        & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -Agents | Out-Null
-        Assert ([IO.File]::ReadAllText($written[0]) -ceq $existing) 'Existing TOML remains byte-for-byte unchanged regardless of table spelling'
+    $existingConfigs = @(
+        @{ Text = '# [mcp_servers.github] is only a comment'; Legacy = $false },
+        @{ Text = '[mcp_servers."github"]'; Legacy = $false },
+        @{ Text = "[mcp_servers.github]`nbearer_token_env_var = 'GITHUB_MCP_PAT'"; Legacy = $true },
+        @{ Text = "[mcp_servers.github]`nurl = 'https://example.invalid/mcp'`nbearer_token_env_var = `"GITHUB_MCP_PAT`""; Legacy = $true },
+        @{ Text = "mcp_servers.github = { bearer_token_env_var = 'GITHUB_MCP_PAT' }"; Legacy = $true },
+        @{ Text = "[mcp_servers.github]`n# bearer_token_env_var = `"GITHUB_MCP_PAT`""; Legacy = $false },
+        @{ Text = "[mcp_servers.github]`nbearer_token_env_var = `"CUSTOM_GITHUB_TOKEN`""; Legacy = $false },
+        @{ Text = "[mcp_servers.github]`nurl = 'https://example.invalid/custom'"; Legacy = $false }
+    )
+    foreach ($existing in $existingConfigs) {
+        [IO.File]::WriteAllText($written[0], $existing.Text, $utf8)
+        $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -Agents | Out-String
+        Assert ([IO.File]::ReadAllText($written[0]) -ceq $existing.Text) 'Existing TOML remains byte-for-byte unchanged regardless of table spelling'
+        Assert (($output -match 'Legacy Codex GitHub MCP entry') -eq $existing.Legacy) "Legacy Codex entry warning matches its fixture: $($existing.Text -replace '\n', ' / ')"
     }
 
     # -Wsl adds the Remote-WSL extension; check mode never enables WSL.
@@ -440,6 +451,8 @@ exit $result
     Assert ((Get-Content -Raw (Join-Path $project 'scripts/check.ps1')) -notmatch 'Copy this gate') 'Scaffolded gate does not tell the reader to copy itself'
     $output = '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name RustSteps -Parent $np -Environment Windows -Stack Rust | Out-String
     Assert ($LASTEXITCODE -eq 0 -and $output -match 'cargo init --vcs none') 'Rust next step keeps the scaffolded .gitignore'
+    $output = '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name PySteps -Parent $np -Environment Windows -Stack Python | Out-String
+    Assert ($LASTEXITCODE -eq 0 -and $output -match 'pytest fails when it finds no tests: add a first test before step 5') 'Python next steps require a first test before the gate'
 
     '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name Plain -Parent $np -WindowsNative no -LinuxTarget no -NoClaude | Out-Null
     Assert ($LASTEXITCODE -eq 0 -and -not (Test-Path (Join-Path $np 'Plain/CLAUDE.md'))) 'No platform tie stays on Windows and -NoClaude is honoured'

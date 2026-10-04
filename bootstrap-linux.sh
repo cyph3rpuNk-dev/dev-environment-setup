@@ -185,6 +185,7 @@ pkg_installed() {
 }
 
 MISSING=""
+PKGS_REPORTED=0
 for p in $PKGS; do
   if pkg_installed "$p"; then ok "$p"; else MISSING="$MISSING $p"; fi
 done
@@ -192,8 +193,10 @@ if [ -z "$MISSING" ]; then
   :
 elif [ "$CHECK_ONLY" = 1 ] || [ "$NO_SUDO" = 1 ]; then
   for p in $MISSING; do bad "$p is missing"; done
+  PKGS_REPORTED=1
 elif [ "$PKG_MGR" = none ]; then
   bad "missing:$MISSING. Install them with your package manager, then rerun."
+  PKGS_REPORTED=1
 else
   echo "  installing:$MISSING"
   [ "$PKG_MGR" = brew ] || echo "  (you will be asked for your sudo password)"
@@ -220,12 +223,19 @@ else
   if install_packages; then ok "system packages installed"
   else
     bad "package installation failed; read the package manager's error above"
+    PKGS_REPORTED=1
     warn "  if another update holds a lock (common just after first start), wait for it to"
     warn "  finish, then rerun; never delete lock files. --no-sudo skips these packages."
   fi
 fi
 
-have awk || bad "awk is required for project templates; install gawk and rerun"
+# A gawk failure already reported above is one cause; do not count it twice.
+if have awk; then :
+elif [ "$PKGS_REPORTED" = 1 ] && case " $MISSING " in *" gawk "*) true ;; *) false ;; esac; then
+  skip "awk unavailable until gawk is installed (reported above)"
+else
+  bad "awk is required for project templates; install gawk and rerun"
+fi
 
 # Probe the supported option rather than assuming a particular release boundary.
 GH_ACTIVE=1
@@ -515,6 +525,13 @@ for profile in .bashrc .bash_profile .zshrc .zprofile .profile; do
     warn "Legacy GITHUB_MCP_PAT entry detected in ~/$profile. Remove it after GitHub CLI authentication is working."
   fi
 done
+# Report, never edit: the retired launcher's Codex entry forwarded GITHUB_MCP_PAT.
+# Lines with a '#' before the key are comments and do not count.
+if grep -Eq "^[^#]*bearer_token_env_var[[:space:]]*=[[:space:]]*[\"']GITHUB_MCP_PAT[\"']" \
+  "$HOME/.codex/config.toml" 2>/dev/null; then
+  warn "Legacy Codex GitHub MCP entry (bearer_token_env_var = \"GITHUB_MCP_PAT\") detected in ~/.codex/config.toml."
+  warn "  remove that server's table; see 'Migrate from the retired GitHub MCP launcher' in docs/agents.md"
+fi
 
 # ---------------------------------------------------------------------------
 if [ "$CONFIGURE_AGENTS" = 1 ]; then
