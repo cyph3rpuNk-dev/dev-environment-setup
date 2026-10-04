@@ -45,8 +45,19 @@ try {
     # the non-console hosts editors use.
     $gate = $template.Replace('{{FORMAT_COMMAND}}', '& $env:TEST_POWERSHELL -NoProfile -Command "[Console]::Error.WriteLine(''progress on stderr''); exit 0"').Replace('{{LINT_COMMAND}}', "Write-Output 'linted'").Replace('{{TEST_COMMAND}}', "Write-Output 'tested'")
     [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $gate, $utf8)
-    $output = & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" 2>&1 | Out-String
-    Assert ($LASTEXITCODE -eq 0 -and $output -notmatch 'FAIL') 'Gate passes a native step that writes to stderr in a fresh process'
+    # Capture with OS pipes as an agent does. PowerShell's own 2>&1 here would turn the
+    # relayed stderr into an error in this harness under Windows PowerShell 5.1.
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $shellExe
+    $start.Arguments = '-NoProfile -File "' + "$testRoot/scripts/check.ps1" + '"'
+    $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::Start($start)
+    $stderrRead = $process.StandardError.ReadToEndAsync()
+    $output = $process.StandardOutput.ReadToEnd() + $stderrRead.Result
+    $process.WaitForExit()
+    Assert ($process.ExitCode -eq 0 -and $output -notmatch 'FAIL') 'Gate passes a native step that writes to stderr in a fresh process'
     Push-Location -LiteralPath $testRoot
     try {
         $output = & "$testRoot/scripts/check.ps1" *>&1 | Out-String
