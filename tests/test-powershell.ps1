@@ -89,6 +89,37 @@ try {
     $output = & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" | Out-String
     Assert ($LASTEXITCODE -eq 1 -and $output -match 'no steps') 'PowerShell gate with every step deleted refuses to report success'
 
+    # Exercise the toolkit's actual Step function independently of slow gate steps.
+    $toolkitAst = Parse "$root/scripts/check.ps1"
+    $toolkitStep = $toolkitAst.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Step'
+    }, $true).Extent.Text
+    $toolkitFixture = @'
+$ErrorActionPreference = 'Stop'
+$failures = 0
+__STEP__
+Step 'progress' { & $env:TEST_POWERSHELL -NoProfile -Command "[Console]::Error.WriteLine('progress on stderr'); exit 0" }
+Write-Output "Progress failures: $failures"
+Step 'native failure' { & $env:TEST_POWERSHELL -NoProfile -Command "[Console]::Error.WriteLine('native failure'); exit 9" }
+Step 'PowerShell error' { Write-Error 'cmdlet failure' }
+Step 'terminating error' { throw 'terminating failure' }
+Step 'missing command' { & missing-toolkit-command-747 }
+Step 'continued' { Write-Output 'continued after failures' }
+exit $failures
+'@
+    $toolkitPath = "$testRoot/toolkit-step.ps1"
+    [IO.File]::WriteAllText($toolkitPath, $toolkitFixture.Replace('__STEP__', $toolkitStep), $utf8)
+    $output = & $shellExe -NoProfile -File $toolkitPath | Out-String
+    Assert ($LASTEXITCODE -eq 4 -and $output -match 'Progress failures: 0' -and $output -match 'continued after failures') 'Toolkit Step accepts stderr and counts all four real failures in a fresh process'
+    $output = & $toolkitPath *>&1 | Out-String
+    Assert ($LASTEXITCODE -eq 4 -and $output -match 'Progress failures: 0' -and $output -match 'progress on stderr' -and $output -match 'continued after failures') 'Toolkit Step preserves exit status and continuation with redirected streams'
+    $hosted = [powershell]::Create()
+    try {
+        $null = $hosted.AddScript("`$output = & '$toolkitPath' *>&1 | Out-String; [pscustomobject]@{ ExitCode = `$LASTEXITCODE; Output = `$output }")
+        $result = @($hosted.Invoke())[-1]
+        Assert ($result.ExitCode -eq 4 -and $result.Output -match 'Progress failures: 0' -and $result.Output -match 'continued after failures') 'Toolkit Step preserves error handling in a hosted runspace'
+    } finally { $hosted.Dispose() }
+
     # A clean checkout has no ordinary `git diff`, so exercise the real toolkit
     # gate in a committed fixture containing trailing whitespace.
     $whitespaceRoot = Join-Path $testRoot 'committed-whitespace'

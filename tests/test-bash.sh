@@ -194,7 +194,10 @@ case "$name" in
         if [ "$package" = gawk ]; then cp "$TEST_AWK_SOURCE" "${TEST_EVENTS%/*}/utilities/awk"; fi
       done
     fi ;;
-  rpm) if missing "$2"; then exit 1; fi ;;
+  rpm)
+    if [ "$2" = --whatprovides ]; then
+      [ "$3" = pkg-config ] && [ "${TEST_PKG_CONFIG_PROVIDER:-0}" = 1 ] || exit 1
+    elif missing "$2"; then exit 1; fi ;;
   dpkg-query) for last; do :; done; if missing "$last"; then exit 1; fi; printf 'install ok installed' ;;
   brew)
     case "$1" in
@@ -480,6 +483,18 @@ if grep -q 'WSL kernel' "$TEST_ROOT/native.log"; then fail 'native Linux reporte
 grep -q '^dpkg-query' "$TEST_EVENTS" || fail 'apt systems not checked with dpkg-query'
 if grep -q '^rpm ' "$TEST_EVENTS"; then fail 'apt system queried rpm'; fi
 pass 'Native Linux is detected and never offered the WSL bridge'
+
+# Fedora installs pkgconf-pkg-config as the provider of the pkg-config capability.
+: > "$TEST_EVENTS"
+TEST_MISSING_PKGS=pkg-config TEST_PKG_CONFIG_PROVIDER=1 run_bootstrap fedora native --stack=rust --check > "$TEST_ROOT/rpm-provider.log"
+grep -q '^rpm -q --whatprovides pkg-config$' "$TEST_EVENTS" || fail 'RPM provider was not checked'
+if grep -Eq '^(sudo|dnf) ' "$TEST_EVENTS"; then fail 'provider check attempted provisioning'; fi
+pass 'Fedora check accepts an installed pkg-config provider'
+result=0
+TEST_MISSING_PKGS=pkg-config run_bootstrap fedora native --stack=rust --check > "$TEST_ROOT/rpm-no-provider.log" 2>&1 || result=$?
+[ "$result" -ne 0 ] || fail 'missing RPM capability incorrectly passed check'
+grep -q 'pkg-config' "$TEST_ROOT/rpm-no-provider.log" || fail 'missing RPM capability was not reported'
+pass 'Fedora check rejects a package with no installed provider'
 
 # Missing packages are installed with the distribution's own package manager.
 : > "$TEST_EVENTS"

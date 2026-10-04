@@ -195,7 +195,8 @@ fi
 
 pkg_installed() {
   case "$PKG_MGR" in
-    dnf) rpm -q "$1" >/dev/null 2>&1 ;;
+    # DNF accepts capabilities too (Fedora's pkgconf-pkg-config provides pkg-config).
+    dnf) rpm -q "$1" >/dev/null 2>&1 || rpm -q --whatprovides "$1" >/dev/null 2>&1 ;;
     apt) dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed' ;;
     brew) brew list --formula "$1" >/dev/null 2>&1 ;;
     *) case "$1" in build-essential) have gcc ;; pkgconf) have pkg-config ;; gawk) have awk ;; *) have "$1" ;; esac ;;
