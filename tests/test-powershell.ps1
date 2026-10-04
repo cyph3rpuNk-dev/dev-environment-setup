@@ -57,17 +57,17 @@ try {
     $stderrRead = $process.StandardError.ReadToEndAsync()
     $output = $process.StandardOutput.ReadToEnd() + $stderrRead.Result
     $process.WaitForExit()
-    Assert ($process.ExitCode -eq 0 -and $output -notmatch 'FAIL') 'Gate passes a native step that writes to stderr in a fresh process'
+    Assert ($process.ExitCode -eq 0 -and $output -notmatch 'FAIL' -and $output -match 'progress on stderr') 'Gate passes a native step that writes to stderr in a fresh process, and shows it'
     Push-Location -LiteralPath $testRoot
     try {
         $output = & "$testRoot/scripts/check.ps1" *>&1 | Out-String
-        Assert ($LASTEXITCODE -eq 0 -and $output -notmatch 'FAIL') 'Gate passes a native step that writes to stderr in-process with redirected streams'
+        Assert ($LASTEXITCODE -eq 0 -and $output -notmatch 'FAIL' -and $output -match 'progress on stderr') 'Gate passes a native step that writes to stderr in-process with redirected streams, and shows it'
     } finally { Pop-Location }
     $hosted = [powershell]::Create()
     try {
         $null = $hosted.AddScript("`$output = & '$testRoot/scripts/check.ps1' *>&1 | Out-String; [pscustomobject]@{ ExitCode = `$LASTEXITCODE; Output = `$output }")
         $result = @($hosted.Invoke())[-1]
-        Assert ($result.ExitCode -eq 0 -and $result.Output -notmatch 'FAIL') 'Gate passes a native step that writes to stderr in a hosted runspace'
+        Assert ($result.ExitCode -eq 0 -and $result.Output -notmatch 'FAIL' -and $result.Output -match 'progress on stderr') 'Gate passes a native step that writes to stderr in a hosted runspace, and shows it'
     } finally { $hosted.Dispose() }
     [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $template, $utf8)
     $output = & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" | Out-String
