@@ -329,6 +329,8 @@ existing project's failing baseline before adding new tooling.
   [NEW-PROJECT.md](NEW-PROJECT.md).
 - Existing project: clone it on the side its README requires, run its own gate first,
   and record pre-existing failures before changing anything.
+- Your own version of someone else's project: check its licence before reusing any of
+  it. [GUIDED-SETUP.md](GUIDED-SETUP.md) Step 5 covers both existing-project paths.
 
 For every change: start from an updated `main`, one branch per coherent change, one
 agent per task and working tree, run the gate yourself, review the diff, and merge

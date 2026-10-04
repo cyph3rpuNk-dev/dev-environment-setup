@@ -128,7 +128,7 @@ At minimum, decide or explicitly defer:
 - Local validation command.
 - CI provider.
 
-Do not select an open-source licence by habit. If ownership, third-party code, model weights, or dataset rights are unclear, keep the repository private and mark the licence decision unresolved.
+Do not select an open-source licence by habit. If ownership, third-party code, model weights, or dataset rights are unclear, keep the repository private and mark the licence decision unresolved. A project built from someone else's code is bound by that code's licence: keep its notices, and see Step 5 of [GUIDED-SETUP.md](GUIDED-SETUP.md) before reusing it.
 
 ## 4. Select a stack deliberately
 

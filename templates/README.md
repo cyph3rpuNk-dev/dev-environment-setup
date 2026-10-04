@@ -41,7 +41,9 @@ Do not overwrite established documentation or policy with a generic template.
    and local gate.
 2. Identify missing pieces and contradictions.
 3. Copy only a missing template whose role is not already served by another file.
-4. Preserve accurate hand-written content verbatim when moving it.
+4. Preserve accurate hand-written content verbatim when moving it. Never replace an
+   existing licence, copyright notice or attribution; when the code came from someone
+   else, record its origin and licence in the charter.
 5. Work on a branch, run the current gate, review the diff, and use a pull request.
 
 See [NEW-PROJECT.md](../NEW-PROJECT.md) for the full new-project workflow.
