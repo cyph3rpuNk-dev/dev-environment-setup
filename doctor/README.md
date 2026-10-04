@@ -46,7 +46,11 @@ tools, GitHub authentication, Git commit identity and agent configuration are wa
 proof that every optional feature is ready.
 
 Selecting Python makes uv required; selecting Rust requires a working compiler
-version probe. An executable on PATH that fails its version command is a failure.
+version probe, including a compiler executable on PATH. Rust check/doctor probes
+disable rustup automatic installation for the duration of each command, then restore
+the caller setting. A missing project-pinned toolchain is reported as unavailable;
+install it deliberately outside check/doctor mode. An executable on PATH that fails
+its version command is a failure.
 The Linux base setup also requires awk for project templates and installs gawk on
 supported Linux distributions when no awk command is available.
 

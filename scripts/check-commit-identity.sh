@@ -29,6 +29,8 @@ attribution="^[[:space:]]*(co-authored-by|generated-by):"
 attribution="$attribution|^[[:space:]]*[a-z0-9_-]+-session:[[:space:]]*<?https?://"
 attribution="$attribution|^[^[:alnum:]]*generated (with|by)[[:space:]]+(\\[|<?https?://|($ai_tools)([^[:alnum:]]|\$))"
 
+commits=$(git rev-list "$rev") || { echo "FAIL could not enumerate commits for $rev" >&2; exit 1; }
+[ -n "$commits" ] || { echo "FAIL no commits found for $rev"; exit 1; }
 checked=0
 failures=0
 while IFS= read -r sha; do
@@ -46,11 +48,21 @@ while IFS= read -r sha; do
   fi
   # Git Bash can classify emoji as alphanumeric in C.UTF-8. Match these ASCII
   # policy markers bytewise so Unicode prefixes cannot bypass attribution checks.
-  if git log -1 --format=%B "$sha" | LC_ALL=C grep -qiE "$attribution"; then
-    echo "FAIL $label: message contains a co-author or attribution line"
-    failures=$((failures + 1))
-  fi
-done < <(git rev-list "$rev")
+  message=$(git log -1 --format=%B "$sha") || {
+    echo "FAIL could not read commit message for $sha" >&2; exit 1;
+  }
+  # Consume the whole message: grep -q can close early and make Git/printf fail
+  # with SIGPIPE under pipefail, disguising a match as a failed condition.
+  match_status=0
+  printf '%s\n' "$message" | LC_ALL=C grep -iE "$attribution" >/dev/null || match_status=$?
+  case "$match_status" in
+    0)
+      echo "FAIL $label: message contains a co-author or attribution line"
+      failures=$((failures + 1)) ;;
+    1) ;; # No matching attribution.
+    *) echo "FAIL attribution matcher failed for $sha (exit $match_status)" >&2; exit 1 ;;
+  esac
+done <<< "$commits"
 
 if [ "$checked" -eq 0 ]; then echo "FAIL no commits found for $rev"; exit 1; fi
 if [ "$failures" -gt 0 ]; then echo "$failures problem(s) in $checked commit(s)"; exit 1; fi

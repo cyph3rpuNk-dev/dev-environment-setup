@@ -101,10 +101,14 @@ $env:USERPROFILE = $Fixture
 $global:Events = New-Object 'System.Collections.Generic.List[string]'
 function Record([string]$Name, $Arguments) {
     $global:Events.Add($Name + ' ' + ($Arguments -join ' '))
+    if ($env:TEST_RUST_PROBE -eq '1' -and $Name -in @('rustup', 'rustc') -and $env:RUSTUP_AUTO_INSTALL -ne '0') {
+        [IO.File]::WriteAllText((Join-Path $env:USERPROFILE 'auto-installed'), 'unexpected automatic install')
+    }
     $global:LASTEXITCODE = 0
 }
 function Get-Command {
     param($Name, $ErrorAction)
+    if ($Name -eq 'rustc' -and $env:TEST_NO_RUSTC -eq '1') { return }
     if ($Name -eq 'rustup' -and $env:TEST_NO_RUSTUP -eq '1') { return }
     if ($Name -in @('rustc', 'cargo') -and $env:TEST_NO_RUST -eq '1') { return }
     if ($Name -eq 'gh' -and $env:TEST_NO_GH -eq '1') { return }
@@ -140,8 +144,10 @@ function claude { Record 'claude' $args; 'context7 github' }
 function codex { Record 'codex' $args }
 function wsl { Record 'wsl' $args }
 function winget { throw 'Unexpected installer' }
+$originalAutoInstall = $env:RUSTUP_AUTO_INSTALL
 & $Source -Stack $SelectedStack -ConfigureAgents:$Agents -Check:$Inspect -Wsl:$UseWsl -Doctor:$Diagnose
 $result = $LASTEXITCODE
+if ($env:RUSTUP_AUTO_INSTALL -cne $originalAutoInstall) { throw 'Rust probe changed caller environment' }
 [IO.File]::WriteAllLines((Join-Path $Fixture 'events.txt'), $global:Events)
 exit $result
 '@
@@ -214,7 +220,8 @@ exit $result
     foreach ($case in @(
         @{ Flag = 'TEST_NO_UV'; Stack = 'Python'; Message = 'uv \(Python projects\) is missing' },
         @{ Flag = 'TEST_BROKEN_UV'; Stack = 'Python'; Message = 'uv --version failed' },
-        @{ Flag = 'TEST_BROKEN_RUSTC'; Stack = 'Rust'; Message = 'rustc --version failed' }
+        @{ Flag = 'TEST_BROKEN_RUSTC'; Stack = 'Rust'; Message = 'rustc --version failed' },
+        @{ Flag = 'TEST_NO_RUSTC'; Stack = 'Rust'; Message = 'rustc is missing' }
     )) {
         $fixture = Join-Path $testRoot $case.Flag
         $null = New-Item -ItemType Directory -Path $fixture
@@ -227,6 +234,30 @@ exit $result
                 Assert ($LASTEXITCODE -ne 0 -and $output -match $case.Message) "Windows $mode fails for $($case.Flag)"
             }
         } finally { [Environment]::SetEnvironmentVariable($case.Flag, $savedFlag, 'Process') }
+    }
+
+    # Model rustup proxies with an absent project-pinned toolchain. Every probe
+    # must suppress auto-install, including doctor component queries.
+    $previousAutoInstall = $env:RUSTUP_AUTO_INSTALL
+    try {
+        $env:TEST_RUST_PROBE = '1'; $env:TEST_BROKEN_RUSTC = '1'
+        foreach ($initial in @($null, '0', '1')) {
+            $env:RUSTUP_AUTO_INSTALL = $initial
+            foreach ($mode in @('Inspect', 'Diagnose')) {
+                $fixture = Join-Path $testRoot ('rust-probe-' + [guid]::NewGuid().ToString('N'))
+                $null = New-Item -ItemType Directory -Path $fixture
+                [IO.File]::WriteAllText((Join-Path $fixture 'rust-toolchain.toml'), "[toolchain]`nchannel = '1.85.0'`n", $utf8)
+                Push-Location $fixture
+                try {
+                    $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Rust' ("-" + $mode) | Out-String
+                    Assert ($LASTEXITCODE -ne 0 -and $output -match 'rustc --version failed') "Absent pinned toolchain fails $mode"
+                    Assert (-not (Test-Path (Join-Path $fixture 'auto-installed'))) "Rust $mode never enables automatic installation"
+                } finally { Pop-Location }
+            }
+        }
+    } finally {
+        $env:RUSTUP_AUTO_INSTALL = $previousAutoInstall
+        $env:TEST_RUST_PROBE = $null; $env:TEST_BROKEN_RUSTC = $null
     }
 
     $fixture = Join-Path $testRoot 'profile-invalid'
@@ -321,6 +352,17 @@ exit $result
 
     # Run the actual linker-probe block with cargo mocked, never a real build.
     $ast = Parse "$root/bootstrap-windows.ps1"
+    $rustProbeAst = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-RustProbe' }, $true)
+    . ([scriptblock]::Create($rustProbeAst.Extent.Text))
+    function Invoke-ThrowingRustFixture { throw 'simulated probe failure' }
+    $previousAutoInstall = $env:RUSTUP_AUTO_INSTALL
+    $Check = $true
+    try {
+        $env:RUSTUP_AUTO_INSTALL = '1'
+        try { Invoke-RustProbe -Command Invoke-ThrowingRustFixture -Arguments @('--version') | Out-Null }
+        catch { Assert ($_.Exception.Message -match 'simulated probe failure') 'Rust probe propagates thrown failure' }
+        Assert ($env:RUSTUP_AUTO_INSTALL -eq '1') 'Throwing Rust probe restores caller environment'
+    } finally { $env:RUSTUP_AUTO_INSTALL = $previousAutoInstall }
     $probeAst = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith("if ((Have 'cargo')") }, $true)
     function Have { return $true }
     function Ok { param($Message) }
@@ -381,7 +423,7 @@ exit $result
     function Ok { param($Message) }
     function Warn { param($Message) }
     function Bad { param($Message) $script:probeErrors++ }
-    function ConvertTo-WslPath { param($Path) '/mnt/c/toolkit' }
+    function ConvertTo-WslPathExpression { param($WindowsPath) '"$(wslpath -u fixture)"' }
     function wsl { $script:wslCalls += ($args -join ' '); $global:LASTEXITCODE = $script:wslExit }
     # Distros present | Check | InstallMissing | Admin | wsl exit | virtualisation | have wsl | failures | install call
     $cases = @(
@@ -419,6 +461,39 @@ exit $result
     $script:wslExit = 1
     Assert (@(Get-WslDistribution).Count -eq 0) 'Failed WSL listing yields no distributions'
     Remove-Item Function:\wsl, Function:\Have
+
+    # Execute generated expressions with a fake wslpath in Bash. Conversion happens
+    # in the selected distribution, and paths remain data even with shell syntax.
+    $bashExe = if ($env:OS -eq 'Windows_NT' -and (Test-Path "$env:ProgramFiles/Git/bin/bash.exe")) {
+        "$env:ProgramFiles/Git/bin/bash.exe"
+    } else { (Get-Command bash -ErrorAction Stop).Source }
+    $handoffStub = @'
+wslpath() {
+  [ "$#" -eq 2 ] && [ "$1" = -u ] && [ "$2" = "$EXPECTED_WINDOWS_PATH" ] || return 42
+  printf '%s\n' "$TRANSLATED_WSL_PATH"
+}
+'@
+    $savedWindowsPath = $env:EXPECTED_WINDOWS_PATH
+    $savedWslPath = $env:TRANSLATED_WSL_PATH
+    try {
+        foreach ($file in @('bootstrap-windows.ps1', 'new-project.ps1')) {
+            $pathAst = (Parse "$root/$file").Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'ConvertTo-WslPathExpression' }, $true)
+            . ([scriptblock]::Create($pathAst.Extent.Text))
+            foreach ($windowsPath in @('C:\Toolkit', 'D:\A B\O''Brien\$(exit 99); & folder')) {
+                $env:EXPECTED_WINDOWS_PATH = $windowsPath
+                foreach ($driveRoot in @('/mnt/', '/windows/', '/')) {
+                    $env:TRANSLATED_WSL_PATH = $driveRoot + 'd/A B/O''Brien/$literal'
+                    $expression = ConvertTo-WslPathExpression $windowsPath
+                    $scriptText = $handoffStub + "`n" + "printf '%s\n' " + $expression + "`n"
+                    [IO.File]::WriteAllText("$testRoot/handoff.sh", $scriptText, $utf8)
+                    $output = (& $bashExe "$testRoot/handoff.sh" | Out-String).Trim()
+                    Assert ($LASTEXITCODE -eq 0 -and $output -ceq $env:TRANSLATED_WSL_PATH) "$file handoff resolves $driveRoot and preserves path characters"
+                }
+            }
+        }
+    } finally {
+        $env:EXPECTED_WINDOWS_PATH = $savedWindowsPath; $env:TRANSLATED_WSL_PATH = $savedWslPath
+    }
 
     # Scaffolder. Piped input keeps it non-interactive, so it can never wait for input.
     $np = Join-Path $testRoot 'np'
