@@ -574,10 +574,14 @@ wslpath() {
     Assert ((Get-Content -Raw (Join-Path $project 'scripts/check.ps1')) -match 'cargo clippy' -and (Get-Content -Raw (Join-Path $project '.gitignore')) -match '/target/') 'Rust stack fills the gate and ignore file'
     Assert ((Get-Content -Raw (Join-Path $project 'scripts/check.ps1')) -notmatch 'Copy this gate') 'Scaffolded gate does not tell the reader to copy itself'
     $output = '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name RustSteps -Parent $np -Environment Windows -Stack Rust | Out-String
-    Assert ($LASTEXITCODE -eq 0 -and $output -match 'cargo init --vcs none') 'Rust next step keeps the scaffolded .gitignore'
+    Assert ($LASTEXITCODE -eq 0 -and $output -match 'cargo init --vcs none   then   cargo generate-lockfile') 'Rust next step keeps the scaffolded .gitignore and creates Cargo.lock'
+    $rustGate = Get-Content -Raw (Join-Path $project 'scripts/check.ps1')
+    Assert ($rustGate.Contains('cargo clippy --locked ') -and $rustGate.Contains('cargo test --locked ')) 'Rust gate rejects a stale Cargo.lock instead of rewriting it'
     $output = '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name PySteps -Parent $np -Environment Windows -Stack Python | Out-String
     Assert ($LASTEXITCODE -eq 0 -and $output -match 'pytest fails when it finds no tests: add a first test before step 5') 'Python next steps require a first test before the gate'
-    Assert ((Get-Content -Raw (Join-Path $np 'PySteps/scripts/check.ps1')).Contains('uv run python -m pytest -q')) 'Python gate runs pytest through python -m so tests can import app modules'
+    $pythonGate = Get-Content -Raw (Join-Path $np 'PySteps/scripts/check.ps1')
+    Assert ($pythonGate.Contains('uv run --locked python -m pytest -q')) 'Python gate runs pytest through python -m so tests can import app modules'
+    Assert (([regex]::Matches($pythonGate, 'uv run --locked ')).Count -eq 3) 'Every Python gate step rejects a stale uv.lock instead of rewriting it'
 
     '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name Plain -Parent $np -WindowsNative no -LinuxTarget no -NoClaude | Out-Null
     Assert ($LASTEXITCODE -eq 0 -and -not (Test-Path (Join-Path $np 'Plain/CLAUDE.md'))) 'No platform tie stays on Windows and -NoClaude is honoured'

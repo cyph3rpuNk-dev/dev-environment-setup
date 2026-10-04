@@ -136,17 +136,19 @@ $commands = @{}
 $ignoreExtra = ''
 switch ($Stack) {
     'Rust' {
+        # --locked: a stale Cargo.lock fails the gate instead of being rewritten.
         $commands = @{ FORMAT_COMMAND = 'cargo fmt --all -- --check'
-                       LINT_COMMAND = 'cargo clippy --workspace --all-targets -- -D warnings'
-                       TEST_COMMAND = 'cargo test --workspace' }
+                       LINT_COMMAND = 'cargo clippy --locked --workspace --all-targets -- -D warnings'
+                       TEST_COMMAND = 'cargo test --locked --workspace' }
         $ignoreExtra = "`n# Rust build output`n/target/`n"
     }
     'Python' {
+        # --locked: a stale uv.lock fails the gate instead of being rewritten.
         # python -m puts the project folder on the import path, so a first test can
         # import an app module such as main.py; plain pytest cannot.
-        $commands = @{ FORMAT_COMMAND = 'uv run ruff format --check .'
-                       LINT_COMMAND = 'uv run ruff check .'
-                       TEST_COMMAND = 'uv run python -m pytest -q' }
+        $commands = @{ FORMAT_COMMAND = 'uv run --locked ruff format --check .'
+                       LINT_COMMAND = 'uv run --locked ruff check .'
+                       TEST_COMMAND = 'uv run --locked python -m pytest -q' }
         $ignoreExtra = "`n# Python environments and caches`n.venv/`n__pycache__/`n.pytest_cache/`n.ruff_cache/`n.mypy_cache/`n"
     }
 }
@@ -220,7 +222,11 @@ switch ($Stack) {
         Write-Host '     the gate''s test line and record that under "Open decisions" in PROJECT-CHARTER.md.'
     }
     # --vcs none: Git and .gitignore already exist; plain cargo init appends a second /target entry.
-    'Rust' { Write-Host '  3. cargo init --vcs none   (review the generated manifest and add rust-toolchain.toml deliberately)' }
+    # generate-lockfile: the gate passes --locked, which fails while Cargo.lock does not exist.
+    'Rust' {
+        Write-Host '  3. cargo init --vcs none   then   cargo generate-lockfile'
+        Write-Host '     (review the generated manifest; add rust-toolchain.toml deliberately).'
+    }
     default { Write-Host '  3. Choose a stack, then replace the placeholders in scripts/check.ps1 with its commands.' }
 }
 Write-Host '  4. Replace the remaining {{...}} placeholders in AGENTS.md; the gate refuses to run'

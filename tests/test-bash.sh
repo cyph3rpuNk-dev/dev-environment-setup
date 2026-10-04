@@ -704,7 +704,7 @@ if git -C "$NP/demo" rev-parse --verify -q HEAD > /dev/null; then fail 'scaffold
 grep -q 'Canonical development environment: LINUX' "$NP/demo/PROJECT-CHARTER.md" || fail 'environment not recorded'
 grep -q 'Environment rationale: it runs on or deploys to Linux' "$NP/demo/PROJECT-CHARTER.md" || fail 'environment reason not recorded'
 grep -q '{{LICENCE_OR_UNDECIDED}}' "$NP/demo/PROJECT-CHARTER.md" || fail 'undecided charter fields were filled in'
-grep -q 'uv run ruff check' "$NP/demo/scripts/check.sh" && grep -qx '.venv/' "$NP/demo/.gitignore" || fail 'Python stack not applied'
+grep -q 'uv run --locked ruff check' "$NP/demo/scripts/check.sh" && grep -qx '.venv/' "$NP/demo/.gitignore" || fail 'Python stack not applied'
 if grep -q '{{[A-Z_][A-Z_]*}}' "$NP/demo/scripts/check.sh"; then fail 'stack gate kept placeholders'; fi
 if grep -q 'Copy this gate' "$NP/demo/scripts/check.sh"; then fail 'scaffolded gate tells the reader to copy itself'; fi
 if grep -q 'CI runs the same gate' "$NP/demo/README.md" || grep -q 'CI invokes the same gate' "$NP/demo/AGENTS.md"; then
@@ -826,7 +826,7 @@ new_project --name winoptions --parent "$NP" --environment windows --stack rust 
 pass 'Windows handoff preserves stack and Claude selection'
 # Choices are case-insensitive, as in new-project.ps1.
 new_project --name mixedcase --parent "$NP" --environment Linux --stack Python > /dev/null || fail 'mixed-case environment or stack rejected'
-grep -q 'uv run ruff check' "$NP/mixedcase/scripts/check.sh" || fail 'mixed-case stack not applied'
+grep -q 'uv run --locked ruff check' "$NP/mixedcase/scripts/check.sh" || fail 'mixed-case stack not applied'
 result=0
 new_project --name winmixed --parent "$NP" --environment WINDOWS --stack RUST > "$TEST_ROOT/handoff-case.log" || result=$?
 [ "$result" -eq 3 ] && grep -q -- '-Environment Windows -Stack rust' "$TEST_ROOT/handoff-case.log" || fail 'upper-case Windows handoff failed'
@@ -836,17 +836,36 @@ new_project --name pysteps --parent "$NP" --environment linux --stack python > "
 grep -q 'pytest fails when it finds no tests: add a first test before step 5' "$TEST_ROOT/np-python.log" \
   || fail 'Python next steps omit the first-test requirement'
 # python -m pytest puts the project on the import path so a first test can import main.py.
-grep -Fq 'uv run python -m pytest -q' "$NP/pysteps/scripts/check.sh" || fail 'Python gate does not run pytest through python -m'
+grep -Fq 'uv run --locked python -m pytest -q' "$NP/pysteps/scripts/check.sh" || fail 'Python gate does not run pytest through python -m'
+# --locked on every uv step: a stale uv.lock must fail the gate, never be rewritten.
+[ "$(grep -c 'uv run --locked ' "$NP/pysteps/scripts/check.sh")" -eq 3 ] || fail 'Python gate has a uv step without --locked'
 pass 'Python next steps require a first test before the gate'
 # The Rust next step keeps the scaffolder's single /target/ entry: plain cargo init
 # would append another. Cargo runs only where installed; it needs no network here.
 new_project --name rusty --parent "$NP" --environment linux --stack rust > "$TEST_ROOT/np-rust.log"
-grep -q 'cargo init --vcs none' "$TEST_ROOT/np-rust.log" || fail 'Rust next step does not use cargo init --vcs none'
+grep -q 'cargo init --vcs none   then   cargo generate-lockfile' "$TEST_ROOT/np-rust.log" \
+  || fail 'Rust next step does not use cargo init --vcs none and create Cargo.lock'
+grep -Fq 'cargo clippy --locked ' "$NP/rusty/scripts/check.sh" && grep -Fq 'cargo test --locked ' "$NP/rusty/scripts/check.sh" \
+  || fail 'Rust gate does not pass --locked'
 if command -v cargo >/dev/null 2>&1; then
   (cd "$NP/rusty" && cargo init --vcs none --quiet) > "$TEST_ROOT/cargo-init.log" 2>&1 || fail 'cargo init --vcs none failed in a scaffolded project'
   [ "$(grep -c 'target' "$NP/rusty/.gitignore")" -eq 1 ] && grep -qx '/target/' "$NP/rusty/.gitignore" \
     || fail 'cargo init changed the scaffolded .gitignore'
   pass 'Rust next step leaves one /target entry after cargo init'
+  # The printed lockfile step lets the gate's --locked pass; a stale lockfile then
+  # fails without being rewritten. Metadata applies the same check without a build.
+  (cd "$NP/rusty" && CARGO_NET_OFFLINE=true cargo generate-lockfile --quiet \
+    && CARGO_NET_OFFLINE=true cargo metadata --locked --format-version 1 > /dev/null) > "$TEST_ROOT/cargo-lock.log" 2>&1 \
+    || fail 'fresh Rust project fails --locked after cargo generate-lockfile'
+  cp "$NP/rusty/Cargo.lock" "$TEST_ROOT/Cargo.lock.before"
+  sed 's/^version = "0.1.0"$/version = "0.2.0"/' "$NP/rusty/Cargo.toml" > "$TEST_ROOT/Cargo.toml.new"
+  grep -qx 'version = "0.2.0"' "$TEST_ROOT/Cargo.toml.new" || fail 'Cargo.toml fixture version not found'
+  mv "$TEST_ROOT/Cargo.toml.new" "$NP/rusty/Cargo.toml"
+  if (cd "$NP/rusty" && CARGO_NET_OFFLINE=true cargo metadata --locked --format-version 1 > /dev/null 2>&1); then
+    fail 'stale Cargo.lock passed --locked'
+  fi
+  cmp -s "$TEST_ROOT/Cargo.lock.before" "$NP/rusty/Cargo.lock" || fail '--locked rewrote Cargo.lock'
+  pass 'Rust lockfile step satisfies --locked, and a stale Cargo.lock fails without being rewritten'
 else
   echo 'SKIP: cargo is not installed; cargo init not exercised'
 fi

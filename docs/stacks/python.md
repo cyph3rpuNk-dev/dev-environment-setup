@@ -24,13 +24,15 @@ Typical project start, after the charter decides on Python:
 ```bash
 uv init --app .                 # or --lib for a library; review what it generates
 uv add --dev ruff pytest
-uv run ruff format --check .
-uv run ruff check .
-uv run python -m pytest -q
+uv run --locked ruff format --check .
+uv run --locked ruff check .
+uv run --locked python -m pytest -q
 ```
 
 `new-project.sh --stack python` (or `new-project.ps1 -Stack Python`) pre-fills the gate
-with the last three commands. Running pytest through `python -m` puts the project
+with the last three commands. `--locked` makes a `uv.lock` that no longer matches
+`pyproject.toml` fail the gate instead of being rewritten; run `uv lock`, review the
+change and commit it. Running pytest through `python -m` puts the project
 folder on the import path, so a test can import an app module such as `main.py`; with
 plain `pytest`, that import fails in the `--app` layout. pytest exits with status 5 when it collects no tests, so
 add a first test before running the gate, or delete the gate's test line until then and
