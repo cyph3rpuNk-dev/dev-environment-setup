@@ -205,7 +205,15 @@ function git {
 }
 function gh { Record 'gh' $args }
 function pwsh { Record 'pwsh' $args }
-function rustup { Record 'rustup' $args; 'stable-x86_64-pc-windows-msvc rustfmt clippy' }
+function rustup {
+    Record 'rustup' $args
+    if (($args -join ' ') -eq 'component list --installed') {
+        if ($env:TEST_COMPONENT_QUERY_FAIL -eq '1') { $global:LASTEXITCODE = 44; return }
+        foreach ($component in @('rustfmt', 'clippy')) {
+            if (($env:TEST_MISSING_COMPONENTS -split ' ') -notcontains $component) { "$component-x86_64-pc-windows-msvc" }
+        }
+    } else { 'stable-x86_64-pc-windows-msvc' }
+}
 function rustc { Record 'rustc' $args; if ($env:TEST_BROKEN_RUSTC -eq '1') { $global:LASTEXITCODE = 42; return }; "rustc fixture`nhost: x86_64-pc-windows-msvc" }
 function cargo { Record 'cargo' $args }
 function cargo-binstall { Record 'cargo-binstall' $args }
@@ -309,6 +317,33 @@ exit $result
                 Assert ($LASTEXITCODE -ne 0 -and $output -match $case.Message) "Windows $mode fails for $($case.Flag)"
             }
         } finally { [Environment]::SetEnvironmentVariable($case.Flag, $savedFlag, 'Process') }
+    }
+
+    foreach ($mode in @('Inspect', 'Diagnose')) {
+        foreach ($missing in @('rustfmt', 'clippy', 'rustfmt clippy', 'query', 'broken-toolchain')) {
+            $fixture = Join-Path $testRoot ([guid]::NewGuid().ToString('N'))
+            $null = New-Item -ItemType Directory -Path $fixture
+            try {
+                $env:TEST_MISSING_COMPONENTS = $missing
+                $env:TEST_COMPONENT_QUERY_FAIL = if ($missing -in @('query', 'broken-toolchain')) { '1' } else { $null }
+                $env:TEST_BROKEN_RUSTC = if ($missing -eq 'broken-toolchain') { '1' } else { $null }
+                $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Rust' ("-" + $mode) | Out-String
+                $expected = if ($missing -eq 'rustfmt clippy') { 2 } else { 1 }
+                Assert ($LASTEXITCODE -eq $expected) "Windows $mode counts $missing exactly once per cause"
+                if ($missing -eq 'query') { Assert ($output -match 'could not query installed Rust components') 'Component query error is reported' }
+                elseif ($missing -ne 'broken-toolchain') {
+                    foreach ($component in ($missing -split ' ')) {
+                        Assert ($output -match ("FAIL.*" + $component + " missing")) "Missing $component is named"
+                    }
+                }
+                $events = Get-Content -Raw (Join-Path $fixture 'events.txt')
+                Assert ($events -notmatch 'rustup component add|cargo (init|build|install)|winget install') 'Component readiness never provisions'
+            } finally {
+                $env:TEST_MISSING_COMPONENTS = $null
+                $env:TEST_COMPONENT_QUERY_FAIL = $null
+                $env:TEST_BROKEN_RUSTC = $null
+            }
+        }
     }
 
     # Model rustup proxies with an absent project-pinned toolchain. Every probe

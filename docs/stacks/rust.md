@@ -32,6 +32,12 @@ On macOS, `bash bootstrap-macos.sh --stack=rust` uses the same rustup installer 
 missing, the bootstrap fails with `xcode-select --install`, which opens a system dialog
 and is left to you.
 
+When Rust is selected, check and doctor require both rustfmt and Clippy. Missing
+components or a failed component query make readiness fail. These checks do not
+install anything; they use the machine toolchain from a neutral directory with
+automatic installation disabled. A broken compiler is reported first, without
+counting missing components again.
+
 Every platform offers cargo-nextest, cargo-audit, cargo-deny, bacon and typos; Linux and macOS
 also includes cargo-machete. They are installed with `cargo-binstall` (prebuilt
 binaries) when possible and built from source otherwise.
