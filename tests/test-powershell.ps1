@@ -39,6 +39,25 @@ try {
     $env:TEST_POWERSHELL = $shellExe
     & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1"
     Assert ($LASTEXITCODE -eq 1) 'Gate counts native failure without contaminating later cmdlets'
+    # cargo and uv write normal progress to stderr. A native step that succeeds must
+    # pass however the gate runs: in a fresh process with captured output (as agents
+    # run it), in-process with its streams redirected, and in a hosted runspace like
+    # the non-console hosts editors use.
+    $gate = $template.Replace('{{FORMAT_COMMAND}}', '& $env:TEST_POWERSHELL -NoProfile -Command "[Console]::Error.WriteLine(''progress on stderr''); exit 0"').Replace('{{LINT_COMMAND}}', "Write-Output 'linted'").Replace('{{TEST_COMMAND}}', "Write-Output 'tested'")
+    [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $gate, $utf8)
+    $output = & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" 2>&1 | Out-String
+    Assert ($LASTEXITCODE -eq 0 -and $output -notmatch 'FAIL') 'Gate passes a native step that writes to stderr in a fresh process'
+    Push-Location -LiteralPath $testRoot
+    try {
+        $output = & "$testRoot/scripts/check.ps1" *>&1 | Out-String
+        Assert ($LASTEXITCODE -eq 0 -and $output -notmatch 'FAIL') 'Gate passes a native step that writes to stderr in-process with redirected streams'
+    } finally { Pop-Location }
+    $hosted = [powershell]::Create()
+    try {
+        $null = $hosted.AddScript("`$output = & '$testRoot/scripts/check.ps1' *>&1 | Out-String; [pscustomobject]@{ ExitCode = `$LASTEXITCODE; Output = `$output }")
+        $result = @($hosted.Invoke())[-1]
+        Assert ($result.ExitCode -eq 0 -and $result.Output -notmatch 'FAIL') 'Gate passes a native step that writes to stderr in a hosted runspace'
+    } finally { $hosted.Dispose() }
     [IO.File]::WriteAllText("$testRoot/scripts/check.ps1", $template, $utf8)
     $output = & $shellExe -NoProfile -File "$testRoot/scripts/check.ps1" | Out-String
     Assert ($LASTEXITCODE -eq 1 -and $output -match 'placeholders') 'Unfilled PowerShell gate refuses to report success'

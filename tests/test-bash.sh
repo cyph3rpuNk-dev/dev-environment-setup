@@ -699,6 +699,10 @@ for f in README.md PROJECT-CHARTER.md AGENTS.md CLAUDE.md scripts/check.sh .gita
 done
 [ -x "$NP/demo/scripts/check.sh" ] || fail 'scaffolded gate is not executable'
 grep -A 1 '^\[Makefile\]$' "$NP/demo/.editorconfig" | grep -qx 'indent_style = tab' || fail 'generated Makefile tab policy missing'
+# Editors must keep the CRLF that .gitattributes gives batch files; cmd.exe needs it.
+grep -qx '\*\.bat text eol=crlf' "$NP/demo/.gitattributes" && grep -qx '\*\.cmd text eol=crlf' "$NP/demo/.gitattributes" \
+  && grep -A 1 -Fx '[*.{bat,cmd}]' "$NP/demo/.editorconfig" | grep -qx 'end_of_line = crlf' \
+  || fail 'generated .editorconfig and .gitattributes disagree on batch-file line endings'
 [ "$(git -C "$NP/demo" symbolic-ref HEAD)" = refs/heads/main ] || fail 'scaffolded repository not on main'
 if git -C "$NP/demo" rev-parse --verify -q HEAD > /dev/null; then fail 'scaffolder created a commit'; fi
 grep -q 'Canonical development environment: LINUX' "$NP/demo/PROJECT-CHARTER.md" || fail 'environment not recorded'
