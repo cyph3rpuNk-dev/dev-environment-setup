@@ -12,7 +12,8 @@ copy this repository's identity requirements into generated projects.
 
 - [README.md](README.md): toolkit overview, entry points, and maintenance commands.
 - [Beginner project guide](docs/vibe-coder-project-guide.md): plain-language workflow
-  and starting prompts for building with a coding agent.
+  and starting prompts for building with a coding agent, from a new idea or an
+  existing project.
 - [START-HERE.md](START-HERE.md): machine setup commands and verification.
 - [NEW-PROJECT.md](NEW-PROJECT.md): project decisions and foundation setup.
 - [GUIDED-SETUP.md](GUIDED-SETUP.md): agent workflow for helping a user with setup

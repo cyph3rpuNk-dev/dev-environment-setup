@@ -16,6 +16,7 @@ through them with a coding agent on **Windows**, **macOS**, **Linux**, or **WSL*
 | Prepare my computer for development | [START-HERE.md](START-HERE.md) |
 | Plan and create a new project | [NEW-PROJECT.md](NEW-PROJECT.md) |
 | Have an agent walk me through setup or improving an existing project | [GUIDED-SETUP.md](GUIDED-SETUP.md) |
+| Take over a project already on GitHub, mine or someone else's | [Beginner guide: Start from an existing project](docs/vibe-coder-project-guide.md#start-from-an-existing-project) |
 
 ## What the toolkit does
 
@@ -115,7 +116,8 @@ in your home folder, and send:
 > command.
 
 It asks what you want to build, recommends where to build it and why, sets up your
-computer, and creates the project; it can also bring an existing project into order.
+computer, and creates the project; it can also bring an existing project into order, or
+help you make your own version of someone else's after checking its licence.
 It asks before each step that installs something, needs your password or changes
 GitHub, and hands you the steps only you can do, such as typing your password or
 signing in in your browser. [GUIDED-SETUP.md](GUIDED-SETUP.md) holds its instructions.

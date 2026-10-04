@@ -86,11 +86,13 @@ Ask, one at a time:
    - B. Start a new project.
    - C. Bring an existing project into order (for example one that was not built
      properly and keeps breaking).
+   - D. Make their own version of someone else's project.
 3. **Do you have a GitHub account?** If not, point them to <https://github.com/signup>
    and wait; it is needed later.
 
-For B and C, the machine setup in Step 3 still comes first; start with Step 2 so you know
-which setup the project needs.
+For B, C and D, the machine setup in Step 3 still comes first. To know which setup the
+project needs, start with Step 2 for a new project, or with the licence check and
+analysis in Step 5 for an existing one (reading a project needs only Git).
 
 ## Step 2: Understand the project (new projects)
 
@@ -312,41 +314,66 @@ gh repo create <name> --private --source . --remote origin --push
 
 Then build the smallest useful version first, as `NEW-PROJECT.md` section 7 describes.
 
-## Step 5: Bring an existing project into order
+## Step 5: Bring an existing project into order, or make your own version of one
 
-Use this path when the user has a project that "was not built properly", keeps breaking,
-or loses fixes after updates.
+Use this path for option C, a project the user owns that "was not built properly", keeps
+breaking or loses fixes after updates, and for option D, someone else's project the user
+wants to make their own version of.
 
-1. **Get it safely.** Clone it into a new folder (inside WSL `~/src` for Linux projects).
+1. **Whose project is it?** For option D, check the licence before anything else. Read
+   `LICENSE`, `COPYING` or the README's licence section and explain in plain words what
+   it allows and requires. With no licence, the user may read the code but not reuse
+   it: stop and suggest asking the author. Permissive licences (MIT, BSD, Apache) allow
+   a new version that keeps the original copyright and licence notices. The GPL
+   requires a version shared with others to stay under the GPL, with its source
+   available; the AGPL also counts use over a network. Never decide for them, and say
+   that this is not legal advice. Then explain the two ways to start and let them
+   choose: a GitHub fork keeps the history and attribution and makes it easy to offer
+   fixes back; a new repository is a clean break that must still keep the original
+   notices. Suggest their own project name
+   rather than the original's.
+2. **Get it safely.** Clone it into a new folder (inside WSL `~/src` for Linux projects).
    Never work on their only copy, never on `main` directly, and never push without their
    approval: `git switch -c rebuild/foundation`.
-2. **Analyse before changing anything.** Read the code, README, build files and CI, and
-   report back under these headings:
+3. **Review before changing anything.** Read the code, README, build files, CI and, for
+   someone else's project, its open issues. Report back under these headings:
    1. Purpose and overview: what it does and what problem it solves.
    2. Tech stack: languages, frameworks, libraries.
    3. Project structure: the key folders and files and the role of each.
-   4. Core features.
-   5. How it works, in simple terms.
-   6. Dependencies: external packages and tools.
-   7. Setup and usage: how it is installed, built and run.
-   8. Strengths and weaknesses.
-3. **Run its current checks** (tests, build, lint) and record what already fails. This
+   4. Core features, and how it works in simple terms.
+   5. Design patterns and conventions.
+   6. Dependencies, setup and usage: how it is installed, built and run.
+   7. Bugs, security issues and improvements. Give each the file and line, a severity,
+      and whether it is confirmed (read in the code or reproduced) or an inference.
+   8. What was not read, run or checked, and why.
+   Offer to save the report in the repository (for example `docs/review.md`) so later
+   sessions can work from it. Say plainly that a review is a starting list: more issues
+   will surface while building, and a second review after large changes is worthwhile.
+4. **Run its current checks** (tests, build, lint) and record what already fails. This
    is the baseline; do not blame new changes for old failures.
-4. **Collect the known problems.** Ask the user to list every problem they have seen,
-   with what they did, what they expected and what happened instead.
-5. **Root cause first.** For each problem, find evidence (code, logs, reproduction)
+5. **Collect the known problems.** For their own project, ask the user to list every
+   problem they have seen, with what they did, what they expected and what happened
+   instead. For someone else's, ask what they want their version to do differently.
+6. **Agree a plan.** Turn the findings and wishes into small changes, most severe first.
+   Show the plan and let the user choose what to do, defer or drop.
+7. **Root cause first.** For each problem, find evidence (code, logs, reproduction)
    before proposing a fix, and explain the cause in plain words. Fix it in the source,
    and add a test that fails without the fix.
-6. **When fixes keep coming back.** Treat reverting fixes as a design problem, not bad
+8. **When fixes keep coming back.** Treat reverting fixes as a design problem, not bad
    luck. Look for whatever regenerates or replaces the files the fix lived in: an update
    or download step, a build that regenerates output, a copied upstream file, a template,
    or a cache. Move the fix to the place that step reads from (or make that step reapply
    and verify it), then add a test or check that fails if the fix disappears again.
-7. **Adopt the toolkit's foundation** without overwriting what already works: follow
+9. **Adopt the toolkit's foundation** without overwriting what already works: follow
    "Existing repositories" in `templates/README.md` (add a charter, `AGENTS.md`, one gate
-   and CI only where the project lacks them).
-8. **Deliver through review.** Work on the branch, run the gate, show the user the full
-   diff, and open a pull request. Merge only when they approve.
+   and CI only where the project lacks them). For option D, keep the original licence
+   and notices, and record in the charter where the project came from, its licence, and
+   what the user's version changes.
+10. **Deliver through review.** Work on the branch, run the gate, show the user the full
+    diff, and open a pull request. Merge only when they approve. For option D, point out
+    fixes that would also help the original project; offering one back is the user's
+    decision, follows that project's contribution guide, and goes as its own small pull
+    request.
 
 ## Finishing
 
