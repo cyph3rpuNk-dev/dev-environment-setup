@@ -411,7 +411,7 @@ approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 
 # For a deliberate second-opinion pass, put read-only settings in
-# ~/.codex/review.config.toml and run Codex with that profile instead.
+# review.config.toml beside this file and run Codex with that profile instead.
 
 [mcp_servers.context7]
 url = "https://mcp.context7.com/mcp"

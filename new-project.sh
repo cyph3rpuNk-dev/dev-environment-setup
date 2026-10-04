@@ -171,15 +171,17 @@ GATE="./scripts/check.sh"
 case "$STACK" in
   rust)
     FORMAT='cargo fmt --all -- --check'
-    LINT='cargo clippy --workspace --all-targets -- -D warnings'
-    TEST='cargo test --workspace'
+    # --locked: a stale Cargo.lock fails the gate instead of being rewritten.
+    LINT='cargo clippy --locked --workspace --all-targets -- -D warnings'
+    TEST='cargo test --locked --workspace'
     IGNORE_EXTRA=$'\n# Rust build output\n/target/' ;;
   python)
-    FORMAT='uv run ruff format --check .'
-    LINT='uv run ruff check .'
+    # --locked: a stale uv.lock fails the gate instead of being rewritten.
     # python -m puts the project folder on the import path, so a first test can
     # import an app module such as main.py; plain pytest cannot.
-    TEST='uv run python -m pytest -q'
+    FORMAT='uv run --locked ruff format --check .'
+    LINT='uv run --locked ruff check .'
+    TEST='uv run --locked python -m pytest -q'
     IGNORE_EXTRA=$'\n# Python environments and caches\n.venv/\n__pycache__/\n.pytest_cache/\n.ruff_cache/\n.mypy_cache/' ;;
   *) FORMAT='' LINT='' TEST='' IGNORE_EXTRA='' ;;
 esac
@@ -294,7 +296,10 @@ case "$STACK" in
     echo "     pytest fails when it finds no tests: add a first test before step 5, or delete"
     echo "     the gate's test line and record that under \"Open decisions\" in PROJECT-CHARTER.md." ;;
   # --vcs none: Git and .gitignore already exist; plain cargo init appends a second /target entry.
-  rust)   echo "  3. cargo init --vcs none   (review the generated manifest and add rust-toolchain.toml deliberately)" ;;
+  # generate-lockfile: the gate passes --locked, which fails while Cargo.lock does not exist.
+  rust)
+    echo "  3. cargo init --vcs none   then   cargo generate-lockfile"
+    echo "     (review the generated manifest; add rust-toolchain.toml deliberately)." ;;
   *)      echo "  3. Choose a stack, then replace the placeholders in scripts/check.sh with its commands." ;;
 esac
 cat <<EOF

@@ -36,6 +36,13 @@ Every platform offers cargo-nextest, cargo-audit, cargo-deny, bacon and typos; L
 also includes cargo-machete. They are installed with `cargo-binstall` (prebuilt
 binaries) when possible and built from source otherwise.
 
+`new-project.sh --stack rust` (or `new-project.ps1 -Stack Rust`) pre-fills the gate with
+`cargo fmt`, and with `cargo clippy` and `cargo test` run with `--locked`, so a
+`Cargo.lock` that no longer matches `Cargo.toml` fails the gate instead of being
+rewritten. Create the lockfile with `cargo generate-lockfile` after `cargo init` and
+commit it. A library that deliberately does not commit `Cargo.lock` should drop
+`--locked` from its gate and record that decision in the charter.
+
 Projects decide which tools and policies their gate requires. Add
 `rust-toolchain.toml` (template in `templates/rust/`) only after choosing a channel or
 exact version from a documented compatibility policy, and use the matching Rust
