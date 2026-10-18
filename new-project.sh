@@ -16,6 +16,9 @@
 #   --windows-native yes|no     builds/runs as a native Windows program?
 #   --linux-target yes|no       runs on or deploys to Linux?
 #   --stack none|rust|python    pre-fill the gate with that stack's usual commands
+#   --rust-version X.Y.Z       optional exact toolchain pin, with --stack rust
+#   --python-version X.Y.Z     optional exact interpreter pin, with --stack python
+#   --maintenance-helpers      optional prerequisites/workflow/artifact helpers
 #   --no-claude                 do not create CLAUDE.md
 #
 # It creates files and runs 'git init' only in a new or empty directory, and never
@@ -25,10 +28,12 @@ set -uo pipefail
 TOOLKIT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd) || exit 1
 TEMPLATES="$TOOLKIT/templates/foundation"
 
-usage() { sed -n '3,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,/^set -uo pipefail/{ /^#/s/^# \{0,1\}//p; }' "${BASH_SOURCE[0]}"; }
 die() { echo "new-project: $*" >&2; exit 1; }
 
 NAME="" PARENT="$HOME/src" ENVIRONMENT="" WINDOWS_NATIVE="" LINUX_TARGET="" STACK=none CLAUDE=1
+RUST_VERSION="" PYTHON_VERSION=""
+MAINTENANCE=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --name) NAME=${2-}; shift ;;
@@ -43,6 +48,11 @@ while [ "$#" -gt 0 ]; do
     --linux-target=*) LINUX_TARGET=${1#*=} ;;
     --stack) STACK=${2-}; shift ;;
     --stack=*) STACK=${1#*=} ;;
+    --rust-version) RUST_VERSION=${2-}; [ -n "$RUST_VERSION" ] || die 'missing Rust version'; shift ;;
+    --rust-version=*) RUST_VERSION=${1#*=}; [ -n "$RUST_VERSION" ] || die 'missing Rust version' ;;
+    --python-version) PYTHON_VERSION=${2-}; [ -n "$PYTHON_VERSION" ] || die 'missing Python version'; shift ;;
+    --python-version=*) PYTHON_VERSION=${1#*=}; [ -n "$PYTHON_VERSION" ] || die 'missing Python version' ;;
+    --maintenance-helpers) MAINTENANCE=1 ;;
     --no-claude) CLAUDE=0 ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; die "unknown option: $1" ;;
@@ -81,6 +91,12 @@ case "$NAME" in *.) die "name must not end with '.'" ;; esac
 # Choices are case-insensitive, as in new-project.ps1.
 STACK=$(lower "$STACK")
 case "$STACK" in none|rust|python) ;; *) die "unknown stack '$STACK' (none, rust, python)" ;; esac
+if [ -n "$RUST_VERSION" ]; then
+  [ "$STACK" = rust ] && [[ "$RUST_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'Rust pin requires --stack rust and an exact major.minor.patch version'
+fi
+if [ -n "$PYTHON_VERSION" ]; then
+  [ "$STACK" = python ] && [[ "$PYTHON_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'Python pin requires --stack python and an exact major.minor.patch version'
+fi
 
 # --- Choose the environment -------------------------------------------------
 REASON=""
@@ -118,9 +134,14 @@ if [ "$ENVIRONMENT" = windows ]; then
   stack_option=""; claude_option=""
   [ "$STACK" = none ] || stack_option=" -Stack $STACK"
   [ "$CLAUDE" = 1 ] || claude_option=" -NoClaude"
+  version_option=""
+  [ -z "$RUST_VERSION" ] || version_option=" -RustVersion $RUST_VERSION"
+  [ -z "$PYTHON_VERSION" ] || version_option=" -PythonVersion $PYTHON_VERSION"
+  maintenance_option=""
+  [ "$MAINTENANCE" = 0 ] || maintenance_option=' -MaintenanceHelpers'
   echo "Recommended environment: native Windows, because $REASON."
   echo "Create it from PowerShell on a Windows PC or Windows virtual machine instead:"
-  echo "  powershell -NoProfile -File .\\new-project.ps1 -Name $NAME -Environment Windows$stack_option$claude_option"
+  echo "  powershell -NoProfile -File .\\new-project.ps1 -Name $NAME -Environment Windows$stack_option$version_option$maintenance_option$claude_option"
   echo "Nothing was created."
   exit 3
 fi
@@ -244,6 +265,17 @@ render gitattributes.template "$TARGET/.gitattributes"
 render gitignore.template "$TARGET/.gitignore"
 if [ -n "$IGNORE_EXTRA" ]; then printf '%s\n' "$IGNORE_EXTRA" >> "$TARGET/.gitignore"; fi
 render editorconfig.template "$TARGET/.editorconfig"
+if [ -n "$RUST_VERSION" ]; then
+  sed "s/{{RUST_CHANNEL_OR_VERSION}}/$RUST_VERSION/g" "$TOOLKIT/templates/rust/rust-toolchain.toml.template" > "$TARGET/rust-toolchain.toml"
+fi
+if [ -n "$PYTHON_VERSION" ]; then printf '%s\n' "$PYTHON_VERSION" > "$TARGET/.python-version"; fi
+if [ "$MAINTENANCE" = 1 ]; then
+  for helper in check-project.sh manage-artifacts.sh; do cp -- "$TOOLKIT/scripts/$helper" "$TARGET/scripts/$helper"; done
+  render run-workflow.sh.template "$TARGET/scripts/run-workflow.sh"
+  render dev-requirements.tsv.template "$TARGET/dev-requirements.tsv"
+  chmod +x "$TARGET/scripts/check-project.sh" "$TARGET/scripts/manage-artifacts.sh" "$TARGET/scripts/run-workflow.sh"
+  printf '\n# Local artifacts, including retained evidence and releases\n/artifacts/\n' >> "$TARGET/.gitignore"
+fi
 git init --quiet -- "$TARGET"
 git -C "$TARGET" symbolic-ref HEAD refs/heads/main
 

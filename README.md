@@ -84,6 +84,12 @@ loads `helpers\github-auth.ps1`, so inspect both files, then unblock both, for e
 
 Full, explained steps are in [START-HERE.md](START-HERE.md). The short version:
 
+The default toolset is minimal. Add `-Toolset Recommended` (Windows) or
+`--toolset=recommended` (Linux/macOS) for auxiliary Rust tools and extra editor
+extensions. Compiling optional tools from source requires a separate explicit
+option. See [predictable setup](docs/setup-reliability.md) for tool-path diagnostics,
+WSL selection and project version pins.
+
 | You are on | Run | Add a stack |
 |---|---|---|
 | Windows | `powershell -NoProfile -File .\bootstrap-windows.ps1 -Check`, then `powershell -NoProfile -File .\bootstrap-windows.ps1 -InstallMissing` | `-Stack Rust,Python` |

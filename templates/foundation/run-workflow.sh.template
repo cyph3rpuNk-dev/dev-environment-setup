@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Optional template: review all hooks before changing CONFIGURED to 1.
+set -euo pipefail
+CONFIGURED=0
+on_start() { echo 'Configure the start hook first' >&2; return 1; }
+on_collect() { echo 'Require the producer closed, then snapshot and hash its logs here' >&2; return 1; }
+on_restore() { echo 'Configure idempotent restoration of owned test changes first' >&2; return 1; }
+# Use checked simple commands in hooks; never eval commands from a state file.
+SCRIPTS=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+ROOT=$(cd -- "$SCRIPTS/.." && pwd -P)
+PHASE=status RUN_ID="" FAILURE_STATE="" LOCK_OWNED=0 RUN_PATH=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in --phase) PHASE=${2-}; shift;; --run-id) RUN_ID=${2-}; shift;; *) echo 'Unknown workflow option' >&2; exit 1;; esac
+  shift
+done
+case "$PHASE" in start|collect|restore|status) ;; *) echo 'Unknown phase' >&2; exit 1;; esac
+if [ "$PHASE" != status ] && [ "$CONFIGURED" != 1 ]; then echo 'Review and configure all hooks first' >&2; exit 1; fi
+if [ "$PHASE" = start ]; then
+  [ -z "$RUN_ID" ] || { echo 'Start always creates a new run' >&2; exit 1; }
+  RUN_ID=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+  RUN_PATH=$(bash "$SCRIPTS/manage-artifacts.sh" --project-directory "$ROOT" --action create --category runs --id "$RUN_ID")
+else
+  RUN_PATH=$(bash "$SCRIPTS/manage-artifacts.sh" --project-directory "$ROOT" --action inspect --category runs --id "$RUN_ID")
+fi
+set_state() {
+  local temporary="$RUN_PATH/.state-$$"
+  (set -C; printf '%s\n' "$1" > "$temporary") || return 1
+  mv -f -- "$temporary" "$RUN_PATH/state.txt" || return 1
+}
+if [ "$PHASE" = status ]; then printf 'Run %s; state: %s\n' "$RUN_ID" "$(cat "$RUN_PATH/state.txt")"; exit 0; fi
+mkdir -- "$RUN_PATH/.workflow-lock" || { echo 'Workflow lock exists; preserve the run' >&2; exit 1; }
+LOCK_OWNED=1
+finish() {
+  local result=$?
+  trap - EXIT
+  if [ "$result" != 0 ] && [ -n "$FAILURE_STATE" ]; then set_state "$FAILURE_STATE" || result=1; fi
+  if [ "$LOCK_OWNED" = 1 ]; then rmdir -- "$RUN_PATH/.workflow-lock" || result=1; fi
+  exit "$result"
+}
+trap finish EXIT
+case "$PHASE" in
+  start)
+    FAILURE_STATE=start-failed; set_state starting
+    revision=unavailable dirty=unknown
+    if [ -e "$ROOT/.git" ]; then
+      if ! revision=$(git -C "$ROOT" rev-parse --verify --quiet HEAD); then revision=unborn-or-unavailable; fi
+      dirty=$(git --no-optional-locks -c core.fsmonitor=false -C "$ROOT" status --porcelain)
+      if [ -n "$dirty" ]; then dirty=true; else dirty=false; fi
+    fi
+    if command -v sha256sum >/dev/null 2>&1; then hash=$(sha256sum "$0"); else hash=$(shasum -a 256 "$0"); fi
+    printf 'run\t%s\nrevision\t%s\ndirty\t%s\nhelper-sha256\t%s\nshell\t%s\n' "$RUN_ID" "$revision" "$dirty" "${hash%% *}" "$BASH_VERSION" > "$RUN_PATH/metadata.tsv"
+    on_start "$RUN_PATH"
+    set_state started;;
+  collect)
+    [ "$(cat "$RUN_PATH/state.txt")" = started ] || { echo 'Collect requires one started, uncollected run' >&2; exit 1; }
+    FAILURE_STATE=collect-failed; set_state collecting
+    on_collect "$RUN_PATH"
+    set_state collected;;
+  restore)
+    case "$(cat "$RUN_PATH/state.txt")" in starting|started|collecting|collected|restoring|start-failed|collect-failed|restore-failed) ;; *) echo 'Restore requires an unrestored run' >&2; exit 1;; esac
+    FAILURE_STATE=restore-failed; set_state restoring
+    on_restore "$RUN_PATH"
+    set_state restored;;
+esac
+FAILURE_STATE=""
+printf 'Run %s; phase %s completed.\n' "$RUN_ID" "$PHASE"
+case "$PHASE" in
+  start) printf 'Next: bash %q --phase collect --run-id %s\n' "$0" "$RUN_ID";;
+  collect) printf 'Next: bash %q --phase restore --run-id %s\n' "$0" "$RUN_ID";;
+esac

@@ -20,6 +20,15 @@ security invariant, destructive command, release process, or production credenti
 | `foundation/gitignore.template` | `.gitignore` | add the stack's build output |
 | `foundation/editorconfig.template` | `.editorconfig` | nothing |
 | `rust/rust-toolchain.toml.template` | `rust-toolchain.toml` | channel or exact version from a documented policy |
+| `foundation/dev-requirements.tsv.template` | `dev-requirements.tsv` with maintenance helpers | uncomment reviewed prerequisite rows; preserve tabs |
+| `foundation/run-workflow.ps1.template`, `run-workflow.sh.template` | `scripts/run-workflow.*` with maintenance helpers | implement all hooks before enabling; pair with `scripts/manage-artifacts.*` |
+
+`-MaintenanceHelpers` / `--maintenance-helpers` additionally copies the matching
+platform's self-contained `scripts/check-project.*` and `scripts/manage-artifacts.*`
+into the new project's `scripts/` directory. No toolkit checkout is needed afterward.
+The workflow starts disabled; its hooks are project decisions. These optional
+helpers do not become required gate steps automatically. See
+[setup reliability](../docs/setup-reliability.md) for schemas, phases and cleanup limits.
 
 The gate templates resolve the repository root as the parent of `scripts/`; adjust
 that if you put the gate elsewhere. Each placeholder is one command, so give separate

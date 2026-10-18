@@ -17,9 +17,19 @@ Windows, macOS, native Linux or WSL), base tools, editor extensions, and whateve
 WSL and agent configuration you select. It also reports whether your global Git
 commit name and email are set and whether the email is a GitHub private (noreply)
 address, without printing either value. Selections are not persisted. The Windows
-doctor with `-Wsl` starts the default WSL distribution to prove it works, because a
-listed distribution can have a missing disk; that starts a process but installs and
-writes nothing.
+doctor with `-Wsl` starts the sole registered distribution, or the one explicitly
+selected with `-Distribution <Name>`, to run `true`. Several distributions require
+an explicit choice. A successful probe proves startup at that moment. It changes
+no WSL configuration; starting a distro can involve WSL's normal runtime writes.
+
+Doctor also reports tool paths, alternatives and version probes. GPG diagnostics
+require `-Signing` / `--signing`; an explicit `-GpgPath` / `--gpg-path=` selects only
+that version probe. No private keys or credentials are inspected. Linux/WSL doctor
+accepts `--project-path=<existing-directory>` to inspect the actual project location.
+Windows accepts `-ProjectPath <existing-directory>`. Both run read-only prerequisite
+checks from that project's `dev-requirements.tsv`, when present; neither runs the
+separate explicit smoke-build option.
+See [predictable setup](../docs/setup-reliability.md) for examples and limits.
 
 Inside WSL, check and doctor modes skip invoking the code launcher: even listing
 extensions can install or replace VS Code Server. Verify remote extensions in a

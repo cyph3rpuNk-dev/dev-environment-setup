@@ -6,6 +6,10 @@ This guide takes a machine from nothing to ready for project work. Follow it top
 bottom the first time. Each step says what to run, what a good result looks like, and
 what to do when it is not.
 
+Bootstrap defaults to a minimal toolset. For optional utility/extension bundles,
+explicit WSL selection and project version pins, see
+[predictable setup](docs/setup-reliability.md). Existing WSL configuration is retained.
+
 Pick your path:
 
 | Your machine | Your project | Follow |

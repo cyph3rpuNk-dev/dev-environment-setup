@@ -51,27 +51,22 @@ state. Enabling the platform needs an Administrator PowerShell and usually a res
 with `Failed to attach disk ... ext4.vhdx` and
 `Wsl/Service/CreateInstance/MountDisk/HCS/ERROR_PATH_NOT_FOUND`.
 
-The registration and its virtual disk are separate. An interrupted install or a
-cleanup of `%LocalAppData%` can leave a registration pointing at a disk that no longer
-exists. Confirm it:
+The registration and its virtual disk are separate. A missing disk or an unavailable
+drive can prevent startup. Start with read-only inspection:
 
 ```powershell
 wsl -l -v
-Get-ChildItem "$env:LOCALAPPDATA" -Recurse -Filter ext4.vhdx -ErrorAction SilentlyContinue
+Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' |
+    Get-ItemProperty | Select-Object DistributionName, BasePath
 ```
 
-Only when there is no matching `ext4.vhdx` is it an orphaned registration, which you
-can clear and reinstall:
-
-```powershell
-wsl --unregister <Distro-name>
-wsl --install <Distro-name>
-```
-
-`wsl --unregister` normally deletes the distribution and every file in it
-permanently, with no confirmation prompt and no recycle bin. Check the disk listing
-and the exact name before running it. This is why the doctor probes with
-`wsl -d <name> -- true` instead of trusting the listing.
+Check the registered `BasePath`, the complete startup error, and whether its drive
+is available. Imported or relocated distributions can live outside `%LocalAppData%`;
+a search there cannot establish that a distribution is disposable. Preserve any
+existing disk and backups before deciding on recovery. Do not unregister a
+distribution as routine troubleshooting: that operation can permanently delete its
+files. The toolkit never unregisters distributions. With several registered distros,
+use `bootstrap-windows.ps1 -Wsl -Doctor -Distribution <Name>` to probe the intended one.
 
 ### Builds are painfully slow in WSL
 

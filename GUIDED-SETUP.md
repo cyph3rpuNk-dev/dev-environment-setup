@@ -141,6 +141,12 @@ official installation guide. Explain the choice; do not install anything yet.
 First, make sure the toolkit is on the computer. If it is not already in the current
 folder or the home folder, clone it (the README has the full text):
 
+Use the default minimal toolset initially. Add recommended utilities only when the
+project needs them, and obtain a separate choice before allowing source builds of
+optional tools. During Windows WSL doctor checks, pass `-Distribution <Name>` when
+more than one distribution is registered. Preserve existing WSL settings. See
+[predictable setup](docs/setup-reliability.md) for diagnostics and version-pin options.
+
 - **Windows (PowerShell):** if `git` is missing, `winget install --id Git.Git -e`, then
   `git clone https://github.com/cyph3rpuNk-dev/dev-environment-setup.git "$HOME\dev-environment-setup"`
 - **Mac (Terminal):** `xcode-select --install` if `git --version` does not work, then

@@ -1,0 +1,7 @@
+# devsetup-requirements-v1
+# Replace examples with reviewed requirements; fields are separated by literal tabs.
+# command	cmake	all
+# rust-target	x86_64-pc-windows-msvc	all
+# pkg-config	zlib	unix
+# windows-sdk	10.0.26100.0	windows
+# file	Cargo.lock	all

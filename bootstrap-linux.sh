@@ -8,6 +8,11 @@
 #   bash bootstrap-linux.sh --check            # report only, change nothing
 #   bash bootstrap-linux.sh --doctor           # check plus environment diagnostics
 #   bash bootstrap-linux.sh --stack=rust,python  # add optional stacks
+#   --toolset=recommended                     # auxiliary tools and extra extensions
+#   --allow-source-builds                     # permit auxiliary tool source builds
+#   --doctor --project-path=/absolute/project # inspect the actual project location
+#   --doctor --signing [--gpg-path=/path/gpg]  # GPG version only; never inspect keys
+#   --result-file=/new/path.tsv               # install-run stage receipt; no overwrite
 #   bash bootstrap-linux.sh --configure-agents # create missing agent defaults and MCP config
 #   bash bootstrap-linux.sh --no-sudo          # install no packages; report missing ones
 #   bash bootstrap-linux.sh --install-browser-bridge
@@ -18,7 +23,7 @@
 set -uo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd) || exit 1
 
-usage() { sed -n '3,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,/^set -uo pipefail/{ /^#/s/^# \{0,1\}//p; }' "${BASH_SOURCE[0]}"; }
 
 CHECK_ONLY=0
 NO_SUDO=0
@@ -27,6 +32,12 @@ INSTALL_BROWSER_BRIDGE=0
 CONFIGURE_AGENTS=0
 WANT_RUST=0
 WANT_PYTHON=0
+TOOLSET=minimal
+ALLOW_SOURCE_BUILDS=0
+PROJECT_PATH=""
+SIGNING=0
+GPG_PATH=""
+RESULT_FILE=""
 add_stacks() {
   local list="$1" s
   # An empty list would be an empty array, which Bash 3.2 (macOS) rejects under set -u.
@@ -44,6 +55,12 @@ add_stacks() {
 for arg in "$@"; do
   case "$arg" in
     --stack=*) add_stacks "${arg#--stack=}" ;;
+    --toolset=*) TOOLSET=${arg#--toolset=} ;;
+    --allow-source-builds) ALLOW_SOURCE_BUILDS=1 ;;
+    --project-path=*) PROJECT_PATH=${arg#--project-path=} ;;
+    --signing) SIGNING=1 ;;
+    --gpg-path=*) GPG_PATH=${arg#--gpg-path=} ;;
+    --result-file=*) RESULT_FILE=${arg#--result-file=} ;;
     --configure-agents) CONFIGURE_AGENTS=1 ;;
     --check)   CHECK_ONLY=1 ;;
     --doctor)  CHECK_ONLY=1; DOCTOR=1 ;;
@@ -53,7 +70,27 @@ for arg in "$@"; do
     *) echo "unknown option: $arg" >&2; usage >&2; exit 1 ;;
   esac
 done
-
+case "$TOOLSET" in minimal|recommended) ;; *) echo 'choose --toolset=minimal or recommended' >&2; exit 1;; esac
+if { [ "$SIGNING" = 1 ] || [ -n "$GPG_PATH" ] || [ -n "$PROJECT_PATH" ]; } && [ "$DOCTOR" != 1 ]; then
+  echo '--signing, --gpg-path and --project-path require --doctor' >&2; exit 1
+fi
+if [ -n "$GPG_PATH" ]; then
+  case "$GPG_PATH" in /*) ;; *) echo '--gpg-path must be absolute' >&2; exit 1;; esac
+  [ -f "$GPG_PATH" ] && [ -x "$GPG_PATH" ] || { echo '--gpg-path must be an executable file' >&2; exit 1; }
+fi
+if [ -n "$PROJECT_PATH" ] && [ ! -d "$PROJECT_PATH" ]; then
+  echo '--project-path must name an existing directory' >&2; exit 1
+fi
+if [ -n "$RESULT_FILE" ]; then
+  if [ "$CHECK_ONLY" = 1 ] || [ -e "$RESULT_FILE" ] || [ -L "$RESULT_FILE" ] || [ ! -d "$(dirname -- "$RESULT_FILE")" ]; then
+    echo '--result-file requires an install run, a new filename and an existing parent directory' >&2; exit 1
+  fi
+fi
+# shellcheck source=helpers/setup-results.sh
+. "$SCRIPT_DIR/helpers/setup-results.sh"
+if [ -n "$RESULT_FILE" ]; then
+  trap 'result=$?; trap - EXIT; write_setup_receipt "$result" || result=1; exit "$result"' EXIT
+fi
 # Platform detection reads files only. The overrides exist for the offline tests.
 KERNEL=${DEVSETUP_KERNEL:-$(uname -s 2>/dev/null)}
 PROC_VERSION=${DEVSETUP_PROC_VERSION:-/proc/version}
@@ -94,11 +131,11 @@ if [ "$NO_SUDO" = 1 ] && [ "$INSTALL_BROWSER_BRIDGE" = 1 ]; then
 fi
 
 FAIL=0
-say()  { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
+say()  { start_setup_stage "$1"; printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
 skip() { printf '  \033[90mskip\033[0m  %s\n' "$1"; }
-warn() { printf '  \033[33mwarn\033[0m  %s\n' "$1"; }
-bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=$((FAIL + 1)); }
+warn() { [ "$SETUP_STAGE_STATUS" = failed ] || SETUP_STAGE_STATUS=warning; printf '  \033[33mwarn\033[0m  %s\n' "$1"; }
+bad()  { SETUP_STAGE_STATUS=failed; printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=$((FAIL + 1)); }
 have() { command -v "$1" >/dev/null 2>&1; }
 # Put an installer's bin directory on PATH for this run. The installers' own env
 # scripts are not sourced: that would run shell code, even in check mode.
@@ -129,7 +166,9 @@ CODEX_CONFIG="$CODEX_DIR/config.toml"
 run_downloaded_installer() {
   local url="$1" installer; shift
   installer=$(mktemp) || return 1
-  if curl --proto '=https' --tlsv1.2 -LsSf "$url" -o "$installer" && sh "$installer" "$@"; then
+  if curl --proto '=https' --proto-redir '=https' --tlsv1.2 -LsSf \
+    --connect-timeout 15 --max-time 180 --retry 2 --retry-delay 1 --retry-max-time 400 \
+    "$url" -o "$installer" && sh "$installer" "$@"; then
     rm -f -- "$installer"; return 0
   fi
   rm -f -- "$installer"; return 1
@@ -337,16 +376,19 @@ install_tool() {
   if have "$bin"; then ok "$bin already installed ($why)"; return; fi
   if [ "$CHECK_ONLY" = 1 ]; then warn "$bin is missing ($why)"; return; fi
   if have cargo-binstall; then
-    cargo binstall -y --no-confirm "$crate" && { ok "$bin installed ($why)"; return; }
-    warn "binstall failed for $crate, falling back to source build"
+    cargo binstall -y --no-confirm --strategies crate-meta-data,quick-install "$crate" && { ok "$bin installed ($why)"; return; }
+    warn "binstall failed for $crate"
   fi
+  if [ "$ALLOW_SOURCE_BUILDS" != 1 ]; then warn "$bin unavailable; source builds require --allow-source-builds"; return; fi
   echo "  building $crate from source, this can take a few minutes ..."
   cargo install --locked "$crate" && ok "$bin installed ($why)" \
     || bad "could not install $crate"
 }
 
-if have cargo; then
-  if ! have cargo-binstall && [ "$CHECK_ONLY" = 0 ]; then
+if [ "$TOOLSET" = minimal ] && have cargo; then
+  skip 'Optional Cargo tools: select --toolset=recommended when needed'
+elif have cargo; then
+  if ! have cargo-binstall && [ "$CHECK_ONLY" = 0 ] && [ "$ALLOW_SOURCE_BUILDS" = 1 ]; then
     echo "  installing cargo-binstall (makes everything below much faster) ..."
     cargo install cargo-binstall --locked && ok "cargo-binstall" \
       || warn "cargo-binstall unavailable; tools will build from source"
@@ -391,9 +433,13 @@ fi # Optional Python stack
 say "4. VS Code extensions"
 INSTALLED_EXTS=""
 EXTENSIONS_CHECKED=0
-EXTS="timonwong.shellcheck ms-vscode.hexeditor usernamehw.errorlens github.vscode-github-actions github.vscode-pull-request-github redhat.vscode-yaml eamodio.gitlens gruntfuggly.todo-tree streetsidesoftware.code-spell-checker bierner.markdown-mermaid"
+EXTS="timonwong.shellcheck"
+if [ "$TOOLSET" = recommended ]; then
+  EXTS="$EXTS ms-vscode.hexeditor usernamehw.errorlens github.vscode-github-actions github.vscode-pull-request-github redhat.vscode-yaml eamodio.gitlens gruntfuggly.todo-tree streetsidesoftware.code-spell-checker bierner.markdown-mermaid"
+fi
 if [ "$WANT_RUST" = 1 ]; then
-  EXTS="$EXTS rust-lang.rust-analyzer vadimcn.vscode-lldb tamasfe.even-better-toml fill-labs.dependi"
+  EXTS="$EXTS rust-lang.rust-analyzer"
+  if [ "$TOOLSET" = recommended ]; then EXTS="$EXTS vadimcn.vscode-lldb tamasfe.even-better-toml fill-labs.dependi"; fi
 fi
 if [ "$WANT_PYTHON" = 1 ]; then
   EXTS="$EXTS ms-python.python charliermarsh.ruff"
@@ -637,6 +683,22 @@ fi # Optional agent configuration
 
 if [ "$DOCTOR" = 1 ]; then
   say "9. Doctor: environment boundaries and usable configuration"
+  # shellcheck source=helpers/tool-diagnostics.sh
+  . "$SCRIPT_DIR/helpers/tool-diagnostics.sh"
+  for tool in git gh code; do show_tool_diagnostic "$tool"; done
+  if [ "$WANT_RUST" = 1 ]; then
+    for tool in rustup rustc cargo; do show_tool_diagnostic "$tool"; done
+  fi
+  if [ "$WANT_PYTHON" = 1 ]; then show_tool_diagnostic uv; fi
+  if [ "$SIGNING" = 1 ] || [ -n "$GPG_PATH" ]; then show_tool_diagnostic gpg "$GPG_PATH"; fi
+  if [ -n "$PROJECT_PATH" ]; then
+    PROJECT_REAL=$(cd -P -- "$PROJECT_PATH" && pwd -P)
+    ok "Project directory: $PROJECT_REAL"
+    if ! bash "$SCRIPT_DIR/scripts/check-project.sh" --project-directory "$PROJECT_REAL"; then bad 'Project prerequisites are not satisfied'; fi
+    if [ "$IS_WSL" = 1 ]; then
+      if wsl_is_windows_path "$PROJECT_REAL"; then warn 'Project resolves on a Windows drive; use the WSL Linux filesystem for Linux builds'; fi
+    fi
+  fi
   if [ "$IS_WSL" = 1 ]; then
     ok "WSL kernel detected"
     # Linux projects on a Windows drive are slow and lose Linux permissions.
@@ -695,4 +757,5 @@ else
   echo "  $FAIL problem(s) above need attention."
 fi
 echo "Next: START-HERE.md for readiness; docs/stacks/ for stacks; new-project.sh to start a project."
+SETUP_COMPLETED=1
 exit "$FAIL"
