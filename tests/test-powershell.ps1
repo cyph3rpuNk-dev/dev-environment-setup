@@ -500,14 +500,16 @@ exit $result
     Assert ($events -match 'remote-wsl' -and $events -notmatch 'wsl --install') 'WSL selection adds its extension and never enables WSL without -InstallMissing'
     try {
         $env:TEST_WSL_NAMES = 'Ubuntu-24.04,ExistingDistro'
+        # The Windows doctor correctly reports an extra host-platform failure on Unix.
+        $hostFailures = if ($env:OS -eq 'Windows_NT') { 0 } else { 1 }
         $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture Base -UseWsl -Diagnose | Out-String
         $events = Get-Content -Raw "$fixture/events.txt"
-        Assert ($LASTEXITCODE -eq 1 -and $output -match 'Multiple WSL' -and $events -notmatch 'wsl -d ') 'Ambiguous WSL doctor does not start an arbitrary distribution'
+        Assert ($LASTEXITCODE -eq (1 + $hostFailures) -and $output -match 'Multiple WSL' -and $events -notmatch 'wsl -d ') 'Ambiguous WSL doctor does not start an arbitrary distribution'
         & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture Base -UseWsl -Diagnose -ChosenDistro ExistingDistro | Out-Null
         $events = Get-Content -Raw "$fixture/events.txt"
-        Assert ($LASTEXITCODE -eq 0 -and $events -match 'wsl -d ExistingDistro (?:-- )?true' -and $events -notmatch 'wsl -d Ubuntu') 'WSL doctor probes only the selected distribution'
+        Assert ($LASTEXITCODE -eq $hostFailures -and $events -match 'wsl -d ExistingDistro (?:-- )?true' -and $events -notmatch 'wsl -d Ubuntu') 'WSL doctor probes only the selected distribution'
         & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture Base -UseWsl -Diagnose -ChosenDistro MissingDistro | Out-Null
-        Assert ($LASTEXITCODE -eq 1 -and (Get-Content -Raw "$fixture/events.txt") -notmatch 'wsl -d ') 'Unknown WSL selection fails without starting another distribution'
+        Assert ($LASTEXITCODE -eq (1 + $hostFailures) -and (Get-Content -Raw "$fixture/events.txt") -notmatch 'wsl -d ') 'Unknown WSL selection fails without starting another distribution'
     }
     finally { Remove-Item Env:\TEST_WSL_NAMES -ErrorAction SilentlyContinue }
 
