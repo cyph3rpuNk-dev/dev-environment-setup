@@ -157,7 +157,7 @@ exit $failures
     # Run the full Windows bootstrap in a child shell with every external tool
     # mocked and a disposable user profile. No real installation or auth occurs.
     $profileHarness = @'
-param([string]$Source, [string]$Fixture, [string]$SelectedStack, [switch]$Agents, [switch]$Inspect, [switch]$UseWsl, [switch]$Diagnose)
+param([string]$Source, [string]$Fixture, [string]$SelectedStack, [switch]$Agents, [switch]$Inspect, [switch]$UseWsl, [switch]$Diagnose, [string]$Toolset = 'Minimal', [switch]$SourceBuilds, [string]$ChosenDistro, [string]$Receipt)
 $env:USERPROFILE = $Fixture
 # Never let a developer's real CODEX_HOME receive test configuration.
 if ($env:TEST_CODEX_HOME) { $env:CODEX_HOME = $env:TEST_CODEX_HOME } else { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }
@@ -182,13 +182,15 @@ function Record([string]$Name, $Arguments) {
     $global:LASTEXITCODE = 0
 }
 function Get-Command {
-    param($Name, $ErrorAction)
+    param($Name, $ErrorAction, [switch]$All, $CommandType)
     if ($Name -eq 'rustc' -and $env:TEST_NO_RUSTC -eq '1') { return }
     if ($Name -eq 'rustup' -and $env:TEST_NO_RUSTUP -eq '1') { return }
     if ($Name -in @('rustc', 'cargo') -and $env:TEST_NO_RUST -eq '1') { return }
     if ($Name -eq 'gh' -and $env:TEST_NO_GH -eq '1') { return }
     if ($Name -eq 'uv' -and $env:TEST_NO_UV -eq '1') { return }
-    Microsoft.PowerShell.Core\Get-Command $Name -ErrorAction SilentlyContinue
+    $lookup = @{ Name = $Name; ErrorAction = 'SilentlyContinue'; All = $All }
+    if ($CommandType) { $lookup.CommandType = $CommandType }
+    Microsoft.PowerShell.Core\Get-Command @lookup
 }
 function code { Record 'code' $args }
 function Get-CimInstance {
@@ -225,12 +227,18 @@ function typos {}
 function uv { Record 'uv' $args; if ($env:TEST_BROKEN_UV -eq '1') { $global:LASTEXITCODE = 43; return }; 'uv fixture' }
 function claude { Record 'claude' $args; 'context7 github' }
 function codex { Record 'codex' $args }
-function wsl { Record 'wsl' $args }
+function wsl {
+    Record 'wsl' $args
+    if ($env:TEST_WSL_NAMES) {
+        if ($args -contains '--quiet') { $env:TEST_WSL_NAMES -split ',' }
+        elseif ($args -contains '--verbose') { $env:TEST_WSL_NAMES -split ',' | ForEach-Object { "$_ Stopped 2" } }
+    }
+}
 function winget { throw 'Unexpected installer' }
-$originalAutoInstall = $env:RUSTUP_AUTO_INSTALL
-& $Source -Stack $SelectedStack -ConfigureAgents:$Agents -Check:$Inspect -Wsl:$UseWsl -Doctor:$Diagnose
+$beforeAutoInstall = $env:RUSTUP_AUTO_INSTALL
+& $Source -Stack $SelectedStack -ConfigureAgents:$Agents -Check:$Inspect -Wsl:$UseWsl -Doctor:$Diagnose -Toolset $Toolset -AllowSourceBuilds:$SourceBuilds -Distribution $ChosenDistro -ResultFile $Receipt
 $result = $LASTEXITCODE
-if ($env:RUSTUP_AUTO_INSTALL -cne $originalAutoInstall) { throw 'Rust probe changed caller environment' }
+if ($env:RUSTUP_AUTO_INSTALL -ne $beforeAutoInstall) { throw 'Bootstrap changed the caller auto-install setting' }
 [IO.File]::WriteAllLines((Join-Path $Fixture 'events.txt'), $global:Events)
 exit $result
 '@
@@ -246,6 +254,7 @@ exit $result
         Assert ($events -match 'gh auth status') 'GitHub authentication is checked without agent configuration'
         if ($selection -match 'Rust') {
             Assert ($events -match 'cargo build' -and $events -match 'rust-analyzer') "Windows $selection selection exercises linker and extensions"
+            Assert ($events -notmatch 'cargo (install|binstall)|gitlens|bacon') 'Minimal Rust avoids optional tooling and extension bundles'
         } else {
             Assert ($events -notmatch 'rustup|rustc|cargo|rust-analyzer') "Windows $selection excludes Rust"
         }
@@ -394,6 +403,39 @@ exit $result
     & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Rust,Go'
     Assert ($LASTEXITCODE -eq 1 -and -not (Get-Content -Raw "$fixture/events.txt")) 'Unknown stack fails before any work'
 
+    # Exercise the actual installer function with absent tools and failed downloads.
+    $bootstrapAst = Parse "$root/bootstrap-windows.ps1"
+    $installerAst = $bootstrapAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Install-Tool' }, $true)
+    . ([scriptblock]::Create($installerAst.Extent.Text))
+    $Check = $false; $AllowSourceBuilds = $false
+    $script:installCalls = @()
+    function Have { param($Name) return ($Name -eq 'cargo-binstall') }
+    function Ok { param($Message) }
+    function Warn { param($Message) }
+    function Bad { param($Message) throw $Message }
+    function cargo { $script:installCalls += ($args -join ' '); $global:LASTEXITCODE = 8 }
+    Install-Tool 'fixture-tool' 'fixture-crate' 'fixture'
+    Assert ($script:installCalls.Count -eq 1 -and $script:installCalls[0] -match 'binstall.*--strategies crate-meta-data,quick-install') 'Failed binary installation cannot silently compile'
+    $AllowSourceBuilds = $true
+    function cargo { $script:installCalls += ($args -join ' '); $global:LASTEXITCODE = 0 }
+    function Have { param($Name) return $false }
+    function Bad { param($Message) }
+    Install-Tool 'fixture-tool' 'fixture-crate' 'fixture'
+    Assert ($script:installCalls[-1] -eq 'install --locked fixture-crate') 'Explicit source-build selection enables the source fallback'
+
+    $fixture = Join-Path $testRoot 'profile-recommended'
+    $null = New-Item -ItemType Directory -Path $fixture
+    & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture Rust -Toolset Recommended | Out-Null
+    Assert ($LASTEXITCODE -eq 0 -and (Get-Content -Raw "$fixture/events.txt") -match 'gitlens') 'Recommended selection retains the larger editor bundle'
+    $receipt = Join-Path $fixture 'result.tsv'
+    & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture Base -Receipt $receipt | Out-Null
+    Assert ($LASTEXITCODE -eq 0 -and (Get-Content -Raw $receipt) -match '# devsetup-results-v1' -and (Get-Content -Raw $receipt) -notmatch 'fake-token|authenticated|GITHUB') 'Setup receipt contains stage outcomes without raw authentication output'
+    $receiptBefore = [IO.File]::ReadAllText($receipt)
+    & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture Base -Receipt $receipt | Out-Null
+    Assert ($LASTEXITCODE -ne 0 -and [IO.File]::ReadAllText($receipt) -ceq $receiptBefore) 'Setup never overwrites an existing receipt'
+    & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture Base -Inspect -Receipt "$fixture/check.tsv" | Out-Null
+    Assert ($LASTEXITCODE -ne 0 -and -not (Test-Path "$fixture/check.tsv")) 'Read-only mode refuses receipt writes'
+
     # Agent defaults: written once, without a byte-order mark, and never rewritten.
     $fixture = Join-Path $testRoot 'profile-agents'
     $null = New-Item -ItemType Directory -Path $fixture
@@ -451,6 +493,29 @@ exit $result
     & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture 'Base' -UseWsl
     $events = Get-Content -Raw "$fixture/events.txt"
     Assert ($events -match 'remote-wsl' -and $events -notmatch 'wsl --install') 'WSL selection adds its extension and never enables WSL without -InstallMissing'
+    try {
+        $env:TEST_WSL_NAMES = 'Ubuntu-24.04,ExistingDistro'
+        $output = & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture Base -UseWsl -Diagnose | Out-String
+        $events = Get-Content -Raw "$fixture/events.txt"
+        Assert ($LASTEXITCODE -eq 1 -and $output -match 'Multiple WSL' -and $events -notmatch 'wsl -d ') 'Ambiguous WSL doctor does not start an arbitrary distribution'
+        & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture Base -UseWsl -Diagnose -ChosenDistro ExistingDistro | Out-Null
+        $events = Get-Content -Raw "$fixture/events.txt"
+        Assert ($LASTEXITCODE -eq 0 -and $events -match 'wsl -d ExistingDistro (?:-- )?true' -and $events -notmatch 'wsl -d Ubuntu') 'WSL doctor probes only the selected distribution'
+        & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture Base -UseWsl -Diagnose -ChosenDistro MissingDistro | Out-Null
+        Assert ($LASTEXITCODE -eq 1 -and (Get-Content -Raw "$fixture/events.txt") -notmatch 'wsl -d ') 'Unknown WSL selection fails without starting another distribution'
+    }
+    finally { Remove-Item Env:\TEST_WSL_NAMES -ErrorAction SilentlyContinue }
+
+    # Provenance helper uses only harmless version probes, including an explicit path.
+    . "$root/helpers/tool-diagnostics.ps1"
+    $script:diagnostics = @()
+    function Ok { param($Message) $script:diagnostics += $Message }
+    function Warn { param($Message) $script:diagnostics += $Message }
+    Show-ToolDiagnostic 'fixture-shell' $shellExe
+    Assert (($script:diagnostics -join '|') -match [regex]::Escape($shellExe)) 'Diagnostic honours an explicit executable path'
+    function masked-tool { throw 'A masked tool must not be executed by diagnostics' }
+    Show-ToolDiagnostic 'masked-tool'
+    Assert (($script:diagnostics -join '|') -match 'resolves to Function') 'Diagnostic detects command masking without executing the function'
 
     # Doctor reports whether the Git identity is set, never the values, and writes nothing.
     $fixture = Join-Path $testRoot 'profile-doctor'
@@ -655,7 +720,7 @@ wslpath() {
 
     # Scaffolder. Piped input keeps it non-interactive, so it can never wait for input.
     $np = Join-Path $testRoot 'np'
-    '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name WinTool -Parent $np -Environment Windows -Stack Rust | Out-Null
+    '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name WinTool -Parent $np -Environment Windows -Stack Rust -RustVersion 1.92.0 | Out-Null
     Assert ($LASTEXITCODE -eq 0) 'Scaffolder creates a Windows project'
     foreach ($file in @('README.md', 'PROJECT-CHARTER.md', 'AGENTS.md', 'CLAUDE.md', 'scripts/check.ps1', '.gitattributes', '.gitignore', '.editorconfig')) {
         $path = Join-Path (Join-Path $np 'WinTool') $file
@@ -664,6 +729,13 @@ wslpath() {
         Assert (-not ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF) -and ($bytes -notcontains 13)) "$file is LF without a byte-order mark"
     }
     $project = Join-Path $np 'WinTool'
+    Assert ((Get-Content -Raw "$project/rust-toolchain.toml") -match 'channel = "1.92.0"') 'Rust scaffold records the supplied exact version'
+    '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name PyTool -Parent $np -Environment Windows -Stack Python -PythonVersion 3.13.7 | Out-Null
+    Assert ($LASTEXITCODE -eq 0 -and (Get-Content -Raw "$np/PyTool/.python-version").Trim() -eq '3.13.7' -and (Get-Content -Raw "$np/PyTool/scripts/check.ps1") -match 'uv run --locked') 'Python scaffold pins the interpreter and refuses implicit lock updates'
+    '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name BadPin -Parent $np -Environment Windows -Stack Python -PythonVersion '3.13;bad' 2>$null | Out-Null
+    Assert ($LASTEXITCODE -ne 0 -and -not (Test-Path "$np/BadPin")) 'Invalid version data fails before creating a project'
+    '' | & $shellExe -NoProfile -File "$root/new-project.ps1" -Name WrongPin -Parent $np -Environment Windows -Stack Python -RustVersion 1.92.0 2>$null | Out-Null
+    Assert ($LASTEXITCODE -ne 0 -and -not (Test-Path "$np/WrongPin")) 'A version pin for the wrong stack is rejected'
     Assert ((git -C $project symbolic-ref HEAD) -eq 'refs/heads/main') 'Scaffolded repository starts on main'
     git -C $project rev-parse --verify -q HEAD 2>$null | Out-Null
     Assert ($LASTEXITCODE -ne 0) 'Scaffolder does not commit'
@@ -770,6 +842,8 @@ exit $LASTEXITCODE
         $null = $json | ConvertFrom-Json
         Assert (-not [string]::IsNullOrWhiteSpace($json)) "$file contains valid Claude JSON"
     }
+    & $shellExe -NoProfile -File "$root/tests/test-maintenance.ps1"
+    Assert ($LASTEXITCODE -eq 0) 'Optional maintenance helpers pass their safety regressions'
 }
 finally {
     # Only this test's newly created directory is eligible for cleanup.

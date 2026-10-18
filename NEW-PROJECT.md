@@ -6,6 +6,17 @@ The development-environment folder remains outside the new repository. Copy only
 
 ## Fast path: the scaffolder
 
+After choosing a compatible exact version, add `-RustVersion X.Y.Z` or
+`-PythonVersion X.Y.Z` with its matching stack on Windows; Bash accepts
+`--rust-version X.Y.Z` / `--python-version X.Y.Z`. These generate project-local pin
+files without installing runtimes. Generated stack gates require committed lockfiles
+and refuse implicit dependency updates. See [predictable setup](docs/setup-reliability.md).
+
+Add `-MaintenanceHelpers` / `--maintenance-helpers` only when the project needs
+prerequisite manifests, multi-step test workflows or owned artifact cleanup. The
+workflow hooks remain disabled until reviewed and implemented. Nothing is added
+to CI or the required gate automatically.
+
 `new-project.ps1` (Windows) and `new-project.sh` (macOS, Linux or WSL) perform sections 1, 2
 and the mechanical part of 5 below:
 

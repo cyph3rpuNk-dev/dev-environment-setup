@@ -138,7 +138,7 @@ mkdir -p "$TEST_ROOT/mock-bin" "$TEST_ROOT/user" "$TEST_ROOT/os"
 # sh must be present: without it a downloaded installer could never run, and the
 # test that partial downloads are never executed would pass vacuously.
 mkdir -p "$TEST_ROOT/utilities"
-for utility in bash sh awk cat chmod cmp cp dirname env grep head ls mkdir mktemp mv rm sed tr uname touch; do
+for utility in bash sh awk cat chmod cmp cp date dirname env grep head ls mkdir mktemp mv rm sed tr uname touch; do
   utility_path=$(command -v "$utility") || fail "test dependency unavailable: $utility"
   printf '#!/bin/sh\nexec "%s" "$@"\n' "$utility_path" > "$TEST_ROOT/utilities/$utility"
   chmod +x "$TEST_ROOT/utilities/$utility"
@@ -221,8 +221,10 @@ case "$name" in
   code)
     if [ "${TEST_CODE_MUTATES:-0}" = 1 ]; then touch "$TEST_EVENTS.server-started"; exit 99; fi
     if [ "$1" = --list-extensions ] && [ "${TEST_CODE_LIST_FAIL:-0}" = 1 ]; then exit 9; fi
-    if [ "$1" = --list-extensions ]; then cat "$TEST_EXTENSIONS"
+    if [ "$1" = --version ]; then printf 'code fixture\n'
+    elif [ "$1" = --list-extensions ]; then cat "$TEST_EXTENSIONS"
     else printf '%s\n' "$2" >> "$TEST_EXTENSIONS"; fi ;;
+  cargo) if [ "${TEST_BINSTALL_FAIL:-0}" = 1 ] && [ "$1" = binstall ]; then exit 8; fi ;;
   gh)
     version=${TEST_GH_VERSION:-2.45.0}
     if [ "$1" = --version ]; then printf 'gh version %s (2026-01-01)\n' "$version"; exit 0; fi
@@ -390,6 +392,32 @@ done
 pass 'Rust checks suppress automatic toolchain installation and preserve caller settings'
 
 
+run_bootstrap fedora native --no-sudo --result-file="$TEST_ROOT/setup.tsv" > /dev/null
+grep -qx '# devsetup-results-v1' "$TEST_ROOT/setup.tsv" || fail 'setup receipt missing'
+cp "$TEST_ROOT/setup.tsv" "$TEST_ROOT/setup.before"
+if run_bootstrap fedora native --no-sudo --result-file="$TEST_ROOT/setup.tsv" > /dev/null 2>&1; then fail 'existing receipt overwritten'; fi
+cmp -s "$TEST_ROOT/setup.before" "$TEST_ROOT/setup.tsv" || fail 'receipt changed on refused overwrite'
+if run_bootstrap fedora native --check --result-file="$TEST_ROOT/check.tsv" > /dev/null 2>&1; then fail 'check accepted receipt write'; fi
+[ ! -e "$TEST_ROOT/check.tsv" ] || fail 'check wrote a receipt'
+if grep -Eq 'fake-token|authenticated|GITHUB' "$TEST_ROOT/setup.tsv"; then fail 'receipt leaked raw authentication output'; fi
+pass 'Optional setup receipts preserve previous records and never write during checks'
+: > "$TEST_EVENTS"
+run_bootstrap fedora native --no-sudo --stack=rust > /dev/null
+if grep -Eq '^cargo (install|binstall)|gitlens|vscode-lldb' "$TEST_EVENTS"; then fail 'minimal selection installed optional tools'; fi
+pass 'Minimal Rust avoids auxiliary tools and extension bundles'
+# Remove optional mocks to exercise real install decisions; never fall through to real cargo.
+mkdir -p "$TEST_ROOT/optional-tools"
+for tool in cargo-nextest cargo-audit cargo-machete cargo-deny bacon typos; do mv "$TEST_ROOT/mock-bin/$tool" "$TEST_ROOT/optional-tools/"; done
+: > "$TEST_EVENTS"
+TEST_BINSTALL_FAIL=1 run_bootstrap fedora native --no-sudo --stack=rust --toolset=recommended > /dev/null
+grep -q '^cargo binstall .*--strategies crate-meta-data,quick-install' "$TEST_EVENTS" || fail 'binary install strategies not bounded'
+if grep -q '^cargo install' "$TEST_EVENTS"; then fail 'failed binary install silently compiled'; fi
+: > "$TEST_EVENTS"
+TEST_BINSTALL_FAIL=1 run_bootstrap fedora native --no-sudo --stack=rust --toolset=recommended --allow-source-builds > /dev/null
+grep -q '^cargo install --locked' "$TEST_EVENTS" || fail 'explicit source fallback did not run'
+for tool in cargo-nextest cargo-audit cargo-machete cargo-deny bacon typos; do mv "$TEST_ROOT/optional-tools/$tool" "$TEST_ROOT/mock-bin/"; done
+pass 'Recommended tools never compile unless explicitly selected'
+: > "$TEST_EXTENSIONS"
 : > "$TEST_EVENTS"
 run_bootstrap fedora wsl --no-sudo --stack=rust --configure-agents > "$TEST_ROOT/first.log"
 grep -q '^rustup component add' "$TEST_EVENTS" || fail 'Rust selection skipped components'
@@ -422,13 +450,45 @@ run_bootstrap fedora native > /dev/null
 grep -q '^code --install-extension timonwong.shellcheck' "$TEST_EVENTS" || fail 'extension IDs matched as regular expressions'
 pass 'Extension IDs are matched literally'
 : > "$TEST_EVENTS"
-run_bootstrap fedora wsl --doctor --stack=rust --configure-agents > "$TEST_ROOT/doctor.log"
+TEST_EXPECT_NO_AUTO_INSTALL=1 run_bootstrap fedora wsl --doctor --stack=rust --configure-agents > "$TEST_ROOT/doctor.log"
 cmp -s "$TEST_ROOT/config.before" "$TEST_ROOT/user/.codex/config.toml" || fail 'Doctor changed config'
 if grep -Eq '^(sudo|dnf|apt-get|curl) |^cargo (install|binstall)|^code --install|^claude mcp add|^gh auth setup-git' "$TEST_EVENTS"; then fail 'Doctor invoked mutation'; fi
 grep -q 'src does not exist yet' "$TEST_ROOT/doctor.log" || fail 'WSL doctor did not report project location'
 grep -q 'Git commit name or email is not set' "$TEST_ROOT/doctor.log" || fail 'doctor did not report a missing Git identity'
 if grep -Eq '^git config --global user\.' "$TEST_EVENTS"; then fail 'doctor wrote Git identity'; fi
 pass 'Doctor performs no provisioning or configuration writes'
+grep -q "git: $TEST_ROOT/mock-bin/git" "$TEST_ROOT/doctor.log" || fail 'doctor omitted the selected tool path'
+mkdir -p "$TEST_ROOT/project path"
+run_bootstrap fedora wsl --doctor --project-path="$TEST_ROOT/project path" > "$TEST_ROOT/project-path.log"
+grep -q 'Project directory:' "$TEST_ROOT/project-path.log" || fail 'project path not diagnosed'
+: > "$TEST_EVENTS"
+if run_bootstrap fedora native --doctor --project-path="$TEST_ROOT/not-present" > /dev/null 2>&1; then fail 'missing project accepted'; fi
+[ ! -s "$TEST_EVENTS" ] || fail 'invalid diagnostic inputs performed external work'
+pass 'Doctor reports tool provenance and validates project paths before work'
+(
+  # No real GPG: only a fixture executable that rejects anything but --version.
+  mkdir -p "$TEST_ROOT/diagnostic one" "$TEST_ROOT/diagnostic two"
+  printf '#!/bin/sh\n[ "$1" = --version ] || exit 91\nprintf "gpg fixture\\n"\n' > "$TEST_ROOT/diagnostic one/gpg"
+  cp "$TEST_ROOT/diagnostic one/gpg" "$TEST_ROOT/diagnostic two/gpg"
+  chmod +x "$TEST_ROOT/diagnostic one/gpg" "$TEST_ROOT/diagnostic two/gpg"
+  # shellcheck source=helpers/tool-diagnostics.sh
+  . "$ROOT/helpers/tool-diagnostics.sh"
+  ok() { printf '%s\n' "$1"; }
+  warn() { printf '%s\n' "$1"; }
+  IS_WSL=0
+  PATH="$TEST_ROOT/diagnostic one:$TEST_ROOT/diagnostic two:$PATH" show_tool_diagnostic gpg > "$TEST_ROOT/provenance.log"
+  grep -q 'alternative:' "$TEST_ROOT/provenance.log" || fail 'duplicate tool path not reported'
+  show_tool_diagnostic gpg "$TEST_ROOT/diagnostic two/gpg" > "$TEST_ROOT/override.log"
+  grep -q "gpg: $TEST_ROOT/diagnostic two/gpg" "$TEST_ROOT/override.log" || fail 'GPG override not selected'
+  printf '#!/bin/sh\ntouch "%s"\n' "$TEST_ROOT/windows-tool-ran" > "$TEST_ROOT/diagnostic one/rustc.exe"
+  chmod +x "$TEST_ROOT/diagnostic one/rustc.exe"
+  IS_WSL=1 show_tool_diagnostic rustc "$TEST_ROOT/diagnostic one/rustc.exe" > "$TEST_ROOT/windows-tool.log"
+  [ ! -e "$TEST_ROOT/windows-tool-ran" ] || fail 'WSL diagnostic ran the Windows build tool'
+  grep -q 'verify a Linux installation' "$TEST_ROOT/windows-tool.log" || fail 'WSL tool boundary not reported'
+  IS_WSL=1 show_tool_diagnostic code "$TEST_ROOT/diagnostic one/rustc.exe" > "$TEST_ROOT/wsl-code.log"
+  [ ! -e "$TEST_ROOT/windows-tool-ran" ] || fail 'WSL diagnostic ran the VS Code shim'
+)
+pass 'Tool diagnostics detect competing paths and honor explicit paths without reading keys'
 # Earlier runs already wrote agent configuration, so prove check and doctor create
 # none on a home that has none yet.
 mv "$TEST_ROOT/user/.codex" "$TEST_ROOT/codex.aside"; mv "$TEST_ROOT/user/.claude" "$TEST_ROOT/claude.aside"
@@ -638,6 +698,7 @@ pass 'A missing Rust toolchain is one required failure'
 if run_bootstrap fedora native --no-sudo --stack=rust > "$TEST_ROOT/download.log" 2>&1; then fail 'download failure returned success'; fi
 [ ! -e "$TEST_EVENTS.executed" ] || fail 'partial installer executed'
 grep -q 'rustup install failed' "$TEST_ROOT/download.log" || fail 'download failure not diagnosed'
+grep -q '^curl .*--connect-timeout 15 --max-time 180 --retry 2' "$TEST_EVENTS" || fail 'download attempts were not bounded'
 if run_bootstrap fedora native --no-sudo --stack=python > "$TEST_ROOT/uv-download.log" 2>&1; then fail 'uv download failure returned success'; fi
 [ ! -e "$TEST_EVENTS.executed" ] || fail 'partial uv installer executed'
 grep -q 'uv install failed' "$TEST_ROOT/uv-download.log" || fail 'uv download failure not diagnosed'
@@ -777,6 +838,15 @@ if grep -q 'CI runs the same gate' "$NP/demo/README.md" || grep -q 'CI invokes t
 fi
 if grep -rl --exclude-dir=.git $'\r' "$NP/demo" | grep -q .; then fail 'scaffolder wrote CRLF'; fi
 pass 'Scaffolder creates an uncommitted Linux repository and records the environment and reason'
+new_project --name rust-pin --parent "$NP" --environment linux --stack rust --rust-version 1.92.0 > /dev/null
+grep -qx 'channel = "1.92.0"' "$NP/rust-pin/rust-toolchain.toml" || fail 'Rust toolchain not pinned'
+grep -q 'cargo test --locked' "$NP/rust-pin/scripts/check.sh" || fail 'Rust tests can change the lockfile'
+new_project --name python-pin --parent "$NP" --environment linux --stack python --python-version 3.13.7 > /dev/null
+grep -qx '3.13.7' "$NP/python-pin/.python-version" || fail 'Python interpreter not pinned'
+if new_project --name invalid-pin --parent "$NP" --environment linux --stack python --python-version '3.13;bad' > /dev/null 2>&1; then fail 'unsafe version accepted'; fi
+if new_project --name wrong-pin --parent "$NP" --environment linux --stack python --rust-version 1.92.0 > /dev/null 2>&1; then fail 'wrong stack version accepted'; fi
+[ ! -e "$NP/invalid-pin" ] && [ ! -e "$NP/wrong-pin" ] || fail 'invalid pins created files'
+pass 'Version pins are exact data and require their matching stack'
 new_project --name plain --parent "$NP" --environment linux --no-claude > /dev/null
 [ ! -e "$NP/plain/CLAUDE.md" ] || fail '--no-claude ignored'
 result=0; (cd "$NP/plain" && ./scripts/check.sh) > "$TEST_ROOT/np-gate.log" 2>&1 || result=$?
@@ -1033,4 +1103,5 @@ env PATH="$TEST_ROOT/identity-no-grep" ALLOWED_EMAILS="$OWNER" "$BASH" \
 [ "$result" -ne 0 ] && grep -q 'required command unavailable: grep' "$TEST_ROOT/missing-grep.log" || fail 'identity check passed without grep'
 pass 'Identity check fails closed when its attribution matcher is unavailable'
 
+bash "$ROOT/tests/test-maintenance.sh"
 echo 'Bash regressions passed.'

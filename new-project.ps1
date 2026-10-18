@@ -11,6 +11,9 @@
     -WindowsNative   yes/no: builds or runs as a native Windows program?
     -LinuxTarget     yes/no: runs on or deploys to Linux?
     -Stack           None, Rust or Python: pre-fill the gate with that stack's usual commands
+    -RustVersion     optional exact major.minor.patch pin, with -Stack Rust
+    -PythonVersion   optional exact major.minor.patch pin, with -Stack Python
+    -MaintenanceHelpers opt in to prerequisite/workflow/artifact helpers
     -NoClaude        do not create CLAUDE.md
 
     Linux projects are created inside WSL (or on a Linux machine) with new-project.sh;
@@ -26,12 +29,19 @@ param(
     [ValidateSet('', 'yes', 'no', 'y', 'n')][string]$WindowsNative = '',
     [ValidateSet('', 'yes', 'no', 'y', 'n')][string]$LinuxTarget = '',
     [ValidateSet('None', 'Rust', 'Python')][string]$Stack = 'None',
+    [string]$RustVersion,
+    [string]$PythonVersion,
+    [switch]$MaintenanceHelpers,
     [switch]$NoClaude
 )
 
 $ErrorActionPreference = 'Stop'
 $templates = Join-Path (Join-Path $PSScriptRoot 'templates') 'foundation'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+if (($RustVersion -and ($Stack -ne 'Rust' -or $RustVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$')) -or
+    ($PythonVersion -and ($Stack -ne 'Python' -or $PythonVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$'))) {
+    Write-Host 'new-project: version pins require their matching stack and an exact major.minor.patch version.' -ForegroundColor Red; exit 1
+}
 
 function Stop-NewProject {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
@@ -103,11 +113,13 @@ else {
 if ($Environment -eq 'Linux') {
     $stackOption = if ($Stack -ne 'None') { ' --stack ' + $Stack.ToLowerInvariant() } else { '' }
     $claudeOption = if ($NoClaude) { ' --no-claude' } else { '' }
+    $versionOption = if ($RustVersion) { " --rust-version $RustVersion" } elseif ($PythonVersion) { " --python-version $PythonVersion" } else { '' }
+    $maintenanceOption = if ($MaintenanceHelpers) { ' --maintenance-helpers' } else { '' }
     Write-Host "Recommended environment: Linux, because $reason."
     Write-Host 'On this Windows machine that means WSL (bootstrap-windows.ps1 -Wsl sets it up).'
     Write-Host 'Open your WSL terminal and run:'
     $bashPath = ConvertTo-WslPathExpression (Join-Path $PSScriptRoot 'new-project.sh')
-    Write-Host ("  bash " + $bashPath + " --name $Name --environment linux$stackOption$claudeOption")
+    Write-Host ("  bash " + $bashPath + " --name $Name --environment linux$stackOption$versionOption$maintenanceOption$claudeOption")
     Write-Host 'Nothing was created.'
     exit 3
 }
@@ -184,6 +196,19 @@ try {
     Write-FromTemplate 'gitignore.template' (Join-Path $target '.gitignore') @{}
     if ($ignoreExtra) { [IO.File]::AppendAllText((Join-Path $target '.gitignore'), $ignoreExtra, $utf8NoBom) }
     Write-FromTemplate 'editorconfig.template' (Join-Path $target '.editorconfig') @{}
+    if ($RustVersion) {
+        $toolchain = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'templates/rust/rust-toolchain.toml.template')).Replace('{{RUST_CHANNEL_OR_VERSION}}', $RustVersion).Replace("`r`n", "`n")
+        [IO.File]::WriteAllText((Join-Path $target 'rust-toolchain.toml'), $toolchain, $utf8NoBom)
+    }
+    if ($PythonVersion) { [IO.File]::WriteAllText((Join-Path $target '.python-version'), "$PythonVersion`n", $utf8NoBom) }
+    if ($MaintenanceHelpers) {
+        foreach ($helper in @('check-project.ps1','manage-artifacts.ps1')) {
+            [IO.File]::WriteAllText((Join-Path $target "scripts/$helper"), [IO.File]::ReadAllText((Join-Path $PSScriptRoot "scripts/$helper")).Replace("`r`n", "`n"), $utf8NoBom)
+        }
+        Write-FromTemplate 'run-workflow.ps1.template' (Join-Path $target 'scripts/run-workflow.ps1') @{}
+        Write-FromTemplate 'dev-requirements.tsv.template' (Join-Path $target 'dev-requirements.tsv') @{}
+        [IO.File]::AppendAllText((Join-Path $target '.gitignore'), "`n# Local artifacts, including retained evidence and releases`n/artifacts/`n", $utf8NoBom)
+    }
 
     git init --quiet -- $target
     if ($LASTEXITCODE -ne 0) { throw "git init failed in $target" }

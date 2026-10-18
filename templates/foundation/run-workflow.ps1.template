@@ -1,0 +1,76 @@
+# Optional template: configure these hooks for a reviewed disposable test.
+[CmdletBinding()]
+param([ValidateSet('Start','Collect','Restore','Status')][string]$Phase = 'Status', [string]$RunId)
+$ErrorActionPreference = 'Stop'
+$WorkflowConfigured = $false
+function Start-TestRun([string]$Directory) { throw 'Configure the start hook first' }
+function Collect-TestRun([string]$Directory) { throw 'Require the producer closed, then snapshot and hash its logs here' }
+function Restore-TestRun([string]$Directory) { throw 'Configure idempotent restoration of owned test changes first' }
+# Hooks must check each native exit code. Never put commands or secrets in state files.
+$root = Split-Path -Parent $PSScriptRoot
+$lockOwned = $false; $failureState = ''; $runPath = ''
+function Set-RunState([string]$Value) {
+    $temp = Join-Path $runPath ('.state-' + [guid]::NewGuid().ToString('N'))
+    [IO.File]::WriteAllText($temp, "$Value`n", (New-Object Text.UTF8Encoding($false)))
+    Move-Item -LiteralPath $temp -Destination (Join-Path $runPath 'state.txt') -Force
+}
+try {
+    if ($Phase -ne 'Status' -and -not $WorkflowConfigured) { throw 'Review and configure all hooks before running the workflow' }
+    if ($Phase -eq 'Start') {
+        if ($RunId) { throw 'Start always creates a new run; do not supply RunId' }
+        $RunId = [guid]::NewGuid().ToString('N')
+        $runPath = & "$PSScriptRoot/manage-artifacts.ps1" -Action Create -Category runs -Id $RunId -ProjectDirectory $root
+    }
+    else {
+        $runPath = & "$PSScriptRoot/manage-artifacts.ps1" -Action Inspect -Category runs -Id $RunId -ProjectDirectory $root
+    }
+    if ($LASTEXITCODE -ne 0) { throw 'Artifact validation failed' }
+    $statePath = Join-Path $runPath 'state.txt'
+    if ($Phase -eq 'Status') {
+        Write-Host "Run $RunId; state: $([IO.File]::ReadAllText($statePath).Trim())"; exit 0
+    }
+    $null = New-Item -ItemType Directory -Path (Join-Path $runPath '.workflow-lock') -ErrorAction Stop
+    $lockOwned = $true
+    $global:LASTEXITCODE = 0
+    switch ($Phase) {
+        'Start' {
+            $failureState = 'start-failed'; Set-RunState 'starting'
+            $revision = 'unavailable'; $dirty = 'unknown'
+            if (Test-Path -LiteralPath (Join-Path $root '.git')) {
+                $revision = (git -C $root rev-parse --verify --quiet HEAD | Out-String).Trim()
+                if ($LASTEXITCODE -ne 0) { $revision = 'unborn-or-unavailable' }
+                $dirty = [bool](git --no-optional-locks -c core.fsmonitor=false -C $root status --porcelain)
+                if ($LASTEXITCODE -ne 0) { throw 'Could not record working-tree state' }
+            }
+            $hash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
+            [IO.File]::WriteAllText((Join-Path $runPath 'metadata.tsv'), "run`t$RunId`nrevision`t$revision`ndirty`t$dirty`nhelper-sha256`t$hash`nshell`t$($PSVersionTable.PSVersion)`n")
+            Start-TestRun $runPath
+            if ($LASTEXITCODE -ne 0) { throw 'Start hook failed' }; Set-RunState 'started'
+        }
+        'Collect' {
+            if ([IO.File]::ReadAllText($statePath).Trim() -cne 'started') { throw 'Collect requires one started, uncollected run' }
+            $failureState = 'collect-failed'; Set-RunState 'collecting'
+            Collect-TestRun $runPath
+            if ($LASTEXITCODE -ne 0) { throw 'Collect hook failed' }; Set-RunState 'collected'
+        }
+        'Restore' {
+            if (@('starting','started','collecting','collected','restoring','start-failed','collect-failed','restore-failed') -cnotcontains [IO.File]::ReadAllText($statePath).Trim()) { throw 'Restore requires an unrestored run' }
+            $failureState = 'restore-failed'; Set-RunState 'restoring'
+            Restore-TestRun $runPath
+            if ($LASTEXITCODE -ne 0) { throw 'Restore hook failed' }; Set-RunState 'restored'
+        }
+    }
+    $failureState = ''
+    Write-Host "Run $RunId; phase $Phase completed."
+    $quotedScript = "'" + $PSCommandPath.Replace("'", "''") + "'"
+    if ($Phase -eq 'Start') { Write-Host "Next: powershell -NoProfile -File $quotedScript -Phase Collect -RunId $RunId" }
+    elseif ($Phase -eq 'Collect') { Write-Host "Next: powershell -NoProfile -File $quotedScript -Phase Restore -RunId $RunId" }
+    exit 0
+}
+catch {
+    if ($lockOwned -and $failureState) { Set-RunState $failureState }
+    Write-Host "FAIL: $_; run: $RunId. Preserve the run; review Status/Restore."; exit 1
+}
+finally {
+    if ($lockOwned) { [IO.Directory]::Delete((Join-Path $runPath '.workflow-lock'), $false) }
+}

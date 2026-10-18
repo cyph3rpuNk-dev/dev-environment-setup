@@ -24,6 +24,7 @@ Typical project start, after the charter decides on Python:
 ```bash
 uv init --app .                 # or --lib for a library; review what it generates
 uv add --dev ruff pytest
+uv sync --locked
 uv run --locked ruff format --check .
 uv run --locked ruff check .
 uv run --locked python -m pytest -q
@@ -39,7 +40,10 @@ add a first test before running the gate, or delete the gate's test line until t
 record that under "Open decisions" in the charter. Pin the Python version deliberately in
 `.python-version` and `pyproject.toml` rather than accepting the generator's default;
 check deployment and library compatibility first. Commit `uv.lock` and change it only
-through uv.
+through uv. After checking compatibility, `new-project.ps1 -Stack Python -PythonVersion 3.13.2`
+or `new-project.sh --stack python --python-version 3.13.2` writes an optional exact
+`.python-version` pin. The number is an example, not a version recommendation;
+keep it consistent with the project's Python requirement.
 
 Linux-first Python work (data pipelines, services, anything with containers) usually
 belongs in Linux or WSL; see the environment table in NEW-PROJECT.md.

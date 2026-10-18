@@ -11,9 +11,16 @@
     Optional selections, supplied on every run including -Check and -Doctor:
 
         -Stack Rust,Python   add language stacks (Base is always included)
+        -Toolset Recommended add auxiliary Cargo tools and extra editor extensions
+        -AllowSourceBuilds   permit source builds of auxiliary tools (otherwise binary only)
         -Wsl                 add a Linux environment through WSL; with -InstallMissing in an
                              Administrator PowerShell it enables the WSL platform
         -ConfigureAgents     create missing Claude Code and Codex defaults and MCP config
+        -Distribution NAME   select the registered WSL distribution for -Wsl -Doctor
+        -Signing             include GPG path/version diagnostics with -Doctor
+        -GpgPath PATH        absolute GPG override for that diagnostic only
+        -ProjectPath PATH    with -Doctor, inspect that project's prerequisites
+        -ResultFile PATH     normal setup only: write a new stage-outcome receipt
 
     The Visual Studio C++ workload remains a manual installation if the Rust linker
     probe fails, because selecting that large workload requires review. Choosing and
@@ -26,7 +33,14 @@ param(
     [switch]$InstallMissing,
     [switch]$Doctor,
     [string[]]$Stack = @('Base'),
+    [ValidateSet('Minimal', 'Recommended')][string]$Toolset = 'Minimal',
+    [switch]$AllowSourceBuilds,
     [switch]$Wsl,
+    [string]$Distribution,
+    [switch]$Signing,
+    [string]$GpgPath,
+    [string]$ProjectPath,
+    [string]$ResultFile,
     [switch]$ConfigureAgents
 )
 
@@ -40,6 +54,22 @@ try { . $githubAuthHelper }
 catch { $githubAuthLoadError = $_.Exception.Message }
 $script:Failures = 0
 if ($Doctor) { $Check = $true }
+if ($ProjectPath -and (-not $Doctor -or -not (Test-Path -LiteralPath $ProjectPath -PathType Container))) {
+    Write-Error '-ProjectPath requires -Doctor and an existing directory.'; exit 1
+}
+if ($ResultFile -and ($Check -or (Test-Path -LiteralPath $ResultFile) -or
+    -not (Test-Path -LiteralPath (Split-Path -Parent ([IO.Path]::GetFullPath($ResultFile))) -PathType Container))) {
+    Write-Host '-ResultFile requires an install run, a new filename and an existing parent directory.' -ForegroundColor Red; exit 1
+}
+if ($Distribution -and (-not $Wsl -or $Distribution -notmatch '^[A-Za-z0-9._-]+$')) {
+    Write-Error '-Distribution needs -Wsl and a registered distribution name.'; exit 1
+}
+if (($Signing -or $GpgPath) -and -not $Doctor) {
+    Write-Error '-Signing and -GpgPath are read-only diagnostics; use -Doctor.'; exit 1
+}
+if ($GpgPath -and (-not [IO.Path]::IsPathRooted($GpgPath) -or -not (Test-Path -LiteralPath $GpgPath -PathType Leaf))) {
+    Write-Error '-GpgPath must name an existing absolute executable path.'; exit 1
+}
 # 'powershell -File' passes "-Stack Rust,Python" as one string, so split commas here
 # rather than relying on array binding. Validate before doing any work.
 $Stack = @($Stack | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -52,11 +82,18 @@ foreach ($selected in $Stack) {
 $wantRust = $Stack -contains 'Rust'
 $wantPython = $Stack -contains 'Python'
 
-function Say  ($m) { Write-Host ""; Write-Host "== $m ==" -ForegroundColor White }
+# Rustup proxies can otherwise install a project's missing pinned toolchain even
+# for --version. Suppress that in report-only modes and restore the caller's env.
+$script:SetupRows = New-Object 'System.Collections.Generic.List[string]'
+$script:SetupStage = ''; $script:SetupStageStatus = 'completed'; $script:SetupCompleted = $false
+. (Join-Path $PSScriptRoot 'helpers/setup-results.ps1')
+try {
+
+function Say  ($m) { Start-SetupStage $m; Write-Host ""; Write-Host "== $m ==" -ForegroundColor White }
 function Ok   ($m) { Write-Host "  ok    $m" -ForegroundColor Green }
 function Skip ($m) { Write-Host "  skip  $m" -ForegroundColor DarkGray }
-function Warn ($m) { Write-Host "  warn  $m" -ForegroundColor Yellow }
-function Bad  ($m) { Write-Host "  FAIL  $m" -ForegroundColor Red; $script:Failures++ }
+function Warn ($m) { if ($script:SetupStageStatus -ne 'failed') { $script:SetupStageStatus = 'warning' }; Write-Host "  warn  $m" -ForegroundColor Yellow }
+function Bad  ($m) { $script:SetupStageStatus = 'failed'; Write-Host "  FAIL  $m" -ForegroundColor Red; $script:Failures++ }
 function Have ($c) { [bool](Get-Command $c -ErrorAction SilentlyContinue) }
 
 # Rust proxies can install a project-selected toolchain even for --version.
@@ -177,7 +214,7 @@ foreach ($t in $base) {
     }
     elseif ($InstallMissing -and (Have 'winget')) {
         Write-Host "  installing $($t.What) ..."
-        winget install --id $($t.Winget) -e --accept-package-agreements --accept-source-agreements | Out-Null
+        winget install --id $($t.Winget) -e --accept-package-agreements --accept-source-agreements | Out-Host
         if ($LASTEXITCODE -ne 0) { Bad "winget failed for $($t.What) (exit $LASTEXITCODE)" }
         elseif (Have $t.Cmd) { Ok "$($t.What) installed" }
         else { Warn "$($t.What) installed but not yet on PATH; open a new terminal" }
@@ -286,17 +323,19 @@ function Install-Tool ($bin, $crate, $why) {
     if (Have $bin) { Ok "$bin already installed ($why)"; return }
     if ($Check) { Warn "$bin is missing ($why)"; return }
     if (Have 'cargo-binstall') {
-        cargo binstall -y --no-confirm $crate | Out-Host
+        cargo binstall -y --no-confirm --strategies 'crate-meta-data,quick-install' $crate | Out-Host
         if ($LASTEXITCODE -eq 0 -and (Have $bin)) { Ok "$bin installed ($why)"; return }
-        Warn "binstall failed for $crate, falling back to a source build"
+        Warn "binstall failed for $crate"
     }
+    if (-not $AllowSourceBuilds) { Warn "$bin unavailable; source builds require -AllowSourceBuilds"; return }
     Write-Host "  building $crate from source, this can take a few minutes ..."
     cargo install --locked $crate | Out-Host
     if ($LASTEXITCODE -eq 0 -and (Have $bin)) { Ok "$bin installed ($why)" } else { Bad "could not install $crate" }
 }
 
-if (Have 'cargo') {
-    if (-not (Have 'cargo-binstall') -and -not $Check) {
+if ($Toolset -eq 'Minimal') { Skip 'Optional Cargo tools: select -Toolset Recommended when needed' }
+elseif (Have 'cargo') {
+    if (-not (Have 'cargo-binstall') -and -not $Check -and $AllowSourceBuilds) {
         Write-Host "  installing cargo-binstall (makes everything below much faster) ..."
         cargo install cargo-binstall --locked | Out-Host
         if ($LASTEXITCODE -eq 0 -and (Have 'cargo-binstall')) { Ok "cargo-binstall" } else { Warn "cargo-binstall unavailable; tools will build from source" }
@@ -318,8 +357,8 @@ else { Bad "cargo not available; skipping cargo tools" }
 # ---------------------------------------------------------------------------
 Say "4. VS Code extensions (Windows side)"
 
-$exts = @(
-    'ms-vscode.powershell',
+$exts = @('ms-vscode.powershell')
+if ($Toolset -eq 'Recommended') { $exts += @(
     'ms-vscode.hexeditor',
     'usernamehw.errorlens',
     'github.vscode-github-actions',
@@ -329,10 +368,13 @@ $exts = @(
     'gruntfuggly.todo-tree',
     'streetsidesoftware.code-spell-checker',
     'bierner.markdown-mermaid'
-)
+) }
 
 if ($Wsl) { $exts += 'ms-vscode-remote.remote-wsl' }
-if ($wantRust) { $exts += @('rust-lang.rust-analyzer', 'ms-vscode.cpptools', 'tamasfe.even-better-toml', 'fill-labs.dependi') }
+if ($wantRust) {
+    $exts += 'rust-lang.rust-analyzer'
+    if ($Toolset -eq 'Recommended') { $exts += @('ms-vscode.cpptools', 'tamasfe.even-better-toml', 'fill-labs.dependi') }
+}
 if ($wantPython) { $exts += @('ms-python.python', 'charliermarsh.ruff') }
 
 if (-not (Have 'code')) {
@@ -555,6 +597,16 @@ else {
 
 if ($Doctor) {
     Say "10. Doctor: environment boundaries and usable configuration"
+    . (Join-Path $PSScriptRoot 'helpers/tool-diagnostics.ps1')
+    $diagnosticTools = @('git', 'gh', 'pwsh', 'code')
+    if ($wantRust) { $diagnosticTools += @('rustup', 'rustc', 'cargo') }
+    if ($wantPython) { $diagnosticTools += 'uv' }
+    foreach ($tool in $diagnosticTools) { Show-ToolDiagnostic $tool }
+    if ($Signing -or $GpgPath) { Show-ToolDiagnostic 'gpg' $GpgPath }
+    if ($ProjectPath) {
+        & (Join-Path $PSScriptRoot 'scripts/check-project.ps1') -ProjectDirectory $ProjectPath
+        if ($LASTEXITCODE -ne 0) { Bad 'Project prerequisites are not satisfied' }
+    }
     if ($env:OS -eq 'Windows_NT') { Ok "Windows host detected" } else { Bad "This script must run on Windows" }
     # Commits need a name and email. Report only whether they are set, never the values.
     if (Have 'git') {
@@ -572,12 +624,20 @@ if ($Doctor) {
     elseif (Have 'wsl') {
         $wslList = @(Get-WslDistribution)
         if ($wslList.Count -eq 0) {
-            Warn "No WSL distribution is registered"
+            if ($Distribution) { Bad "Selected WSL distribution '$Distribution' is not registered" }
+            else { Warn "No WSL distribution is registered" }
         }
         else {
             # Matching '2' against the whole listing is not a check: it also matches a
             # name like 'Ubuntu-22.04', and it never proves the distribution can start.
-            $distro = $wslList[0]
+            $distro = $null
+            if ($Distribution) {
+                if ($wslList -contains $Distribution) { $distro = $Distribution }
+                else { Bad "Selected WSL distribution '$Distribution' is not registered" }
+            }
+            elseif ($wslList.Count -eq 1) { $distro = $wslList[0] }
+            else { Bad 'Multiple WSL distributions found; rerun with -Distribution <Name>' }
+            if ($distro) {
             $wslVerbose = ((wsl --list --verbose 2>$null | Out-String) -replace "`0", '')
             if ($wslVerbose -match ("(?m)^\s*\*?\s*" + [regex]::Escape($distro) + "\s+\S+\s+2\s*$")) {
                 Ok "WSL distribution '$distro' is version 2"
@@ -591,6 +651,7 @@ if ($Doctor) {
             }
             else {
                 Bad "WSL distribution '$distro' is registered but will not start. See 'A registered WSL distribution will not start' in docs/troubleshooting.md."
+            }
             }
         }
         if (Have 'code') {
@@ -617,4 +678,9 @@ else { Write-Host "  $($script:Failures) problem(s) above need attention." -Fore
 
 Write-Host 'Next: START-HERE.md for readiness; docs/stacks/ for stacks; new-project.ps1 to start a project.'
 
+$script:SetupCompleted = $true
 exit $script:Failures
+}
+finally {
+    if ($ResultFile) { Write-SetupReceipt ([IO.Path]::GetFullPath($ResultFile)) $script:SetupCompleted }
+}
