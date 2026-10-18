@@ -82,8 +82,7 @@ foreach ($selected in $Stack) {
 $wantRust = $Stack -contains 'Rust'
 $wantPython = $Stack -contains 'Python'
 
-# Rustup proxies can otherwise install a project's missing pinned toolchain even
-# for --version. Suppress that in report-only modes and restore the caller's env.
+# Stage receipts contain outcomes only; normal reruns still perform live checks.
 $script:SetupRows = New-Object 'System.Collections.Generic.List[string]'
 $script:SetupStage = ''; $script:SetupStageStatus = 'completed'; $script:SetupCompleted = $false
 . (Join-Path $PSScriptRoot 'helpers/setup-results.ps1')
@@ -333,7 +332,7 @@ function Install-Tool ($bin, $crate, $why) {
     if ($LASTEXITCODE -eq 0 -and (Have $bin)) { Ok "$bin installed ($why)" } else { Bad "could not install $crate" }
 }
 
-if ($Toolset -eq 'Minimal') { Skip 'Optional Cargo tools: select -Toolset Recommended when needed' }
+if ($Toolset -eq 'Minimal' -and (Have 'cargo')) { Skip 'Optional Cargo tools: select -Toolset Recommended when needed' }
 elseif (Have 'cargo') {
     if (-not (Have 'cargo-binstall') -and -not $Check -and $AllowSourceBuilds) {
         Write-Host "  installing cargo-binstall (makes everything below much faster) ..."

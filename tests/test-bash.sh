@@ -157,13 +157,13 @@ name=${0##*/}
 printf '%s\n' "$name $*" >> "$TEST_EVENTS"
 if [ "${TEST_RUST_PROBE:-0}" = 1 ]; then
   case "$name" in
-    rustup|rustc) [ "${RUSTUP_AUTO_INSTALL:-1}" = 0 ] || touch "$TEST_EVENTS.auto-installed" ;;
+    rustup|rustc|cargo) [ "${RUSTUP_AUTO_INSTALL:-1}" = 0 ] || touch "$TEST_EVENTS.auto-installed" ;;
     gh) [ "${RUSTUP_AUTO_INSTALL-unset}" = "$TEST_ORIGINAL_AUTO_INSTALL" ] || exit 91 ;;
   esac
 fi
 if [ "${TEST_OLD_RUSTUP:-0}" = 1 ]; then
   case "$name" in
-    rustup|rustc)
+    rustup|rustc|cargo)
       # rustup before 1.28 ignores RUSTUP_AUTO_INSTALL and installs a toolchain
       # pinned by the working directory or any parent.
       dir=$PWD
@@ -351,7 +351,7 @@ for mode in --check --doctor; do
     for component in $missing; do
       grep -q "FAIL.*$component missing" "$TEST_ROOT/components.log" || fail 'missing component not named'
     done
-    if grep -Eq 'rustup component add|^(sudo|dnf|cargo) ' "$TEST_EVENTS"; then fail 'component check provisioned tools'; fi
+    if grep -Eq 'rustup component add|^(sudo|dnf) |^cargo (init|build|install|binstall)' "$TEST_EVENTS"; then fail 'component check provisioned tools'; fi
   done
   result=0
   TEST_COMPONENT_QUERY_FAIL=1 run_bootstrap fedora native "$mode" --stack=rust > "$TEST_ROOT/component-query.log" 2>&1 || result=$?

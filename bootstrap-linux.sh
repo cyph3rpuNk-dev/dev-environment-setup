@@ -385,7 +385,7 @@ install_tool() {
     || bad "could not install $crate"
 }
 
-if [ "$TOOLSET" = minimal ]; then
+if [ "$TOOLSET" = minimal ] && have cargo; then
   skip 'Optional Cargo tools: select --toolset=recommended when needed'
 elif have cargo; then
   if ! have cargo-binstall && [ "$CHECK_ONLY" = 0 ] && [ "$ALLOW_SOURCE_BUILDS" = 1 ]; then

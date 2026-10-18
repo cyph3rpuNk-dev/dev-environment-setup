@@ -298,6 +298,7 @@ exit $result
     $blockedRoot = Join-Path $testRoot 'blocked-toolkit'
     $null = New-Item -ItemType Directory -Path (Join-Path $blockedRoot 'helpers')
     Copy-Item -LiteralPath "$root/bootstrap-windows.ps1" -Destination $blockedRoot
+    Copy-Item -LiteralPath "$root/helpers/setup-results.ps1" -Destination (Join-Path $blockedRoot 'helpers')
     Copy-Item -LiteralPath "$root/helpers/codex-with-github-mcp.ps1" -Destination (Join-Path $blockedRoot 'helpers')
     [IO.File]::WriteAllText((Join-Path $blockedRoot 'helpers/github-auth.ps1'), "throw 'simulated blocked file'`n", $utf8)
     $fixture = Join-Path $testRoot 'profile-blocked-helper'
