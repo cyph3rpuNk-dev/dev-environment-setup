@@ -2,7 +2,10 @@
 function Complete-SetupStage {
     if ($script:SetupStage) { $script:SetupRows.Add("$script:SetupStage`t$script:SetupStageStatus") }
 }
-function Start-SetupStage([string]$Name) {
+function Start-SetupStage {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Updates in-memory receipt metadata only; no external state is changed.')]
+    param([string]$Name)
     Complete-SetupStage
     $script:SetupStage = ($Name.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
     $script:SetupStageStatus = 'completed'

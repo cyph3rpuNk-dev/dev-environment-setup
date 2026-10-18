@@ -6,6 +6,8 @@ complete_setup_stage() {
 "
 }
 start_setup_stage() {
+  # Avoid normalization subprocesses on ordinary runs without a receipt.
+  [ -n "$RESULT_FILE" ] || return 0
   complete_setup_stage
   SETUP_STAGE=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9][^a-z0-9]*/-/g;s/^-//;s/-$//')
   SETUP_STAGE_STATUS=completed

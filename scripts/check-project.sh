@@ -24,7 +24,7 @@ if [ -f "$MANIFEST" ]; then
     NF!=3 || $3 !~ /^(all|windows|unix)$/ { exit 1 }
     $1 ~ /^(command|rust-target|pkg-config)$/ { if ($2 !~ /^[A-Za-z0-9][A-Za-z0-9._+-]*$/) exit 1; next }
     $1=="windows-sdk" { if ($3!="windows" || $2 !~ /^10[.]0[.][0-9]+[.][0-9]+$/) exit 1; next }
-    $1=="file" { if ($2=="" || $2 ~ /^[/\\]/ || $2 ~ /:/ || $2 ~ /(^|[/\\])[.][.]([/\\]|$)/) exit 1; next }
+    $1=="file" { if ($2=="" || $2 ~ /^[\/\\]/ || $2 ~ /:/ || $2 ~ /(^|[\/\\])[.][.]([\/\\]|$)/) exit 1; next }
     { exit 1 }
     END { if (NR==0) exit 1 }
   ' "$MANIFEST" || { echo 'FAIL: invalid requirements manifest' >&2; exit 1; }

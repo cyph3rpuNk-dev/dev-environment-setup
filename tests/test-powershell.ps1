@@ -430,7 +430,11 @@ exit $result
     Assert ($LASTEXITCODE -eq 0 -and (Get-Content -Raw "$fixture/events.txt") -match 'gitlens') 'Recommended selection retains the larger editor bundle'
     $receipt = Join-Path $fixture 'result.tsv'
     & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture Base -Receipt $receipt | Out-Null
-    Assert ($LASTEXITCODE -eq 0 -and (Get-Content -Raw $receipt) -match '# devsetup-results-v1' -and (Get-Content -Raw $receipt) -notmatch 'fake-token|authenticated|GITHUB') 'Setup receipt contains stage outcomes without raw authentication output'
+    $receiptText = [IO.File]::ReadAllText($receipt)
+    Assert ($LASTEXITCODE -eq 0 -and $receiptText -match '# devsetup-results-v1' -and $receiptText -notmatch 'fake-token|authenticated|GITHUB_MCP_PAT') 'Setup receipt contains stage outcomes without raw authentication output'
+    foreach ($row in ($receiptText.TrimEnd() -split "`n" | Select-Object -Skip 3)) {
+        Assert ($row -cmatch '^[a-z0-9-]+\t(completed|warning|failed|interrupted)$') 'Receipt stage rows contain only a label and an outcome'
+    }
     $receiptBefore = [IO.File]::ReadAllText($receipt)
     & $shellExe -NoProfile -File "$testRoot/profiles.ps1" "$root/bootstrap-windows.ps1" $fixture Base -Receipt $receipt | Out-Null
     Assert ($LASTEXITCODE -ne 0 -and [IO.File]::ReadAllText($receipt) -ceq $receiptBefore) 'Setup never overwrites an existing receipt'
@@ -514,8 +518,8 @@ exit $result
     function Warn { param($Message) $script:diagnostics += $Message }
     Show-ToolDiagnostic 'fixture-shell' $shellExe
     Assert (($script:diagnostics -join '|') -match [regex]::Escape($shellExe)) 'Diagnostic honours an explicit executable path'
-    function masked-tool { throw 'A masked tool must not be executed by diagnostics' }
-    Show-ToolDiagnostic 'masked-tool'
+    function Get-MaskedTool { throw 'A masked tool must not be executed by diagnostics' }
+    Show-ToolDiagnostic 'Get-MaskedTool'
     Assert (($script:diagnostics -join '|') -match 'resolves to Function') 'Diagnostic detects command masking without executing the function'
 
     # Doctor reports whether the Git identity is set, never the values, and writes nothing.

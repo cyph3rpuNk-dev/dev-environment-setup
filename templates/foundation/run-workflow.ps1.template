@@ -3,13 +3,13 @@
 param([ValidateSet('Start','Collect','Restore','Status')][string]$Phase = 'Status', [string]$RunId)
 $ErrorActionPreference = 'Stop'
 $WorkflowConfigured = $false
-function Start-TestRun([string]$Directory) { throw 'Configure the start hook first' }
-function Collect-TestRun([string]$Directory) { throw 'Require the producer closed, then snapshot and hash its logs here' }
-function Restore-TestRun([string]$Directory) { throw 'Configure idempotent restoration of owned test changes first' }
+function Invoke-StartHook([string]$Directory) { throw 'Configure the start hook first' }
+function Invoke-CollectHook([string]$Directory) { throw 'Require the producer closed, then snapshot and hash its logs here' }
+function Invoke-RestoreHook([string]$Directory) { throw 'Configure idempotent restoration of owned test changes first' }
 # Hooks must check each native exit code. Never put commands or secrets in state files.
 $root = Split-Path -Parent $PSScriptRoot
 $lockOwned = $false; $failureState = ''; $runPath = ''
-function Set-RunState([string]$Value) {
+function Write-RunState([string]$Value) {
     $temp = Join-Path $runPath ('.state-' + [guid]::NewGuid().ToString('N'))
     [IO.File]::WriteAllText($temp, "$Value`n", (New-Object Text.UTF8Encoding($false)))
     Move-Item -LiteralPath $temp -Destination (Join-Path $runPath 'state.txt') -Force
@@ -34,7 +34,7 @@ try {
     $global:LASTEXITCODE = 0
     switch ($Phase) {
         'Start' {
-            $failureState = 'start-failed'; Set-RunState 'starting'
+            $failureState = 'start-failed'; Write-RunState 'starting'
             $revision = 'unavailable'; $dirty = 'unknown'
             if (Test-Path -LiteralPath (Join-Path $root '.git')) {
                 $revision = (git -C $root rev-parse --verify --quiet HEAD | Out-String).Trim()
@@ -44,20 +44,20 @@ try {
             }
             $hash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
             [IO.File]::WriteAllText((Join-Path $runPath 'metadata.tsv'), "run`t$RunId`nrevision`t$revision`ndirty`t$dirty`nhelper-sha256`t$hash`nshell`t$($PSVersionTable.PSVersion)`n")
-            Start-TestRun $runPath
-            if ($LASTEXITCODE -ne 0) { throw 'Start hook failed' }; Set-RunState 'started'
+            Invoke-StartHook $runPath
+            if ($LASTEXITCODE -ne 0) { throw 'Start hook failed' }; Write-RunState 'started'
         }
         'Collect' {
             if ([IO.File]::ReadAllText($statePath).Trim() -cne 'started') { throw 'Collect requires one started, uncollected run' }
-            $failureState = 'collect-failed'; Set-RunState 'collecting'
-            Collect-TestRun $runPath
-            if ($LASTEXITCODE -ne 0) { throw 'Collect hook failed' }; Set-RunState 'collected'
+            $failureState = 'collect-failed'; Write-RunState 'collecting'
+            Invoke-CollectHook $runPath
+            if ($LASTEXITCODE -ne 0) { throw 'Collect hook failed' }; Write-RunState 'collected'
         }
         'Restore' {
             if (@('starting','started','collecting','collected','restoring','start-failed','collect-failed','restore-failed') -cnotcontains [IO.File]::ReadAllText($statePath).Trim()) { throw 'Restore requires an unrestored run' }
-            $failureState = 'restore-failed'; Set-RunState 'restoring'
-            Restore-TestRun $runPath
-            if ($LASTEXITCODE -ne 0) { throw 'Restore hook failed' }; Set-RunState 'restored'
+            $failureState = 'restore-failed'; Write-RunState 'restoring'
+            Invoke-RestoreHook $runPath
+            if ($LASTEXITCODE -ne 0) { throw 'Restore hook failed' }; Write-RunState 'restored'
         }
     }
     $failureState = ''
@@ -68,7 +68,7 @@ try {
     exit 0
 }
 catch {
-    if ($lockOwned -and $failureState) { Set-RunState $failureState }
+    if ($lockOwned -and $failureState) { Write-RunState $failureState }
     Write-Host "FAIL: $_; run: $RunId. Preserve the run; review Status/Restore."; exit 1
 }
 finally {
